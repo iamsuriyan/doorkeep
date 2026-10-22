@@ -27,10 +27,14 @@ func (h *harness) highBand() (nonceID string, out map[string]any) {
 }
 
 func (h *harness) solvePoW(n string, out map[string]any) map[string]any {
+	return h.solvePoWWith(n, out, browserHeaders())
+}
+
+func (h *harness) solvePoWWith(n string, out map[string]any, hdr map[string]string) map[string]any {
 	pm := out["pow"].(map[string]any)
 	params := pow.Params{Salt: pm["salt"].(string), Bits: int(pm["bits"].(float64)), N: int(pm["n"].(float64))}
 	body, _ := json.Marshal(map[string]any{"n": n, "kind": "pow", "sol": pow.Solve(n, params)})
-	_, res := h.post("/v1/challenge", string(body), browserHeaders())
+	_, res := h.post("/v1/challenge", string(body), hdr)
 	return res
 }
 

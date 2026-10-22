@@ -14,6 +14,7 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/nonce"
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
+	"github.com/iamsuriyan/doorkeep/internal/scoring/model"
 	"github.com/iamsuriyan/doorkeep/internal/token"
 )
 
@@ -170,5 +171,6 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error-codes": []string{"internal-error"}})
 		return
 	}
+	s.Models.Label(site.ID, ev.Features, label == "bot", model.WeightStrong)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "error-codes": []string{}})
 }

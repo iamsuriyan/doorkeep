@@ -494,3 +494,38 @@ func (db *DB) DeleteListEntry(ctx context.Context, siteID string, id int64) erro
 	_, err := db.w.ExecContext(ctx, `DELETE FROM lists WHERE site_id=? AND id=?`, siteID, id)
 	return err
 }
+
+// ---------------- model state ----------------
+
+func (db *DB) SaveModels(ctx context.Context, snap map[string][]byte, now time.Time) error {
+	tx, err := db.w.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for k, b := range snap {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO model_state(key,blob,updated_at) VALUES(?,?,?)
+			ON CONFLICT(key) DO UPDATE SET blob=excluded.blob, updated_at=excluded.updated_at`, k, b, ms(now)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (db *DB) LoadModels(ctx context.Context) (map[string][]byte, error) {
+	rows, err := db.r.QueryContext(ctx, `SELECT key, blob FROM model_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]byte{}
+	for rows.Next() {
+		var k string
+		var b []byte
+		if err := rows.Scan(&k, &b); err != nil {
+			return nil, err
+		}
+		out[k] = b
+	}
+	return out, rows.Err()
+}

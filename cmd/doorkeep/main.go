@@ -121,11 +121,19 @@ func serve(args []string) error {
 	}
 	srv := api.New(cfg, db, rs, log)
 	loadIPData(srv.IP, cfg, log)
+	if snap, err := db.LoadModels(context.Background()); err == nil && len(snap) > 0 {
+		if err := srv.Models.Restore(snap); err != nil {
+			log.Error("model restore", "err", err)
+		} else {
+			log.Info("models restored", "entries", len(snap))
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go janitor(ctx, db, cfg, log)
 	go ipdataRefresher(ctx, srv.IP, cfg, log)
+	go modelSaver(ctx, srv, db, log)
 
 	hs := &http.Server{
 		Addr:              cfg.Listen,
@@ -165,7 +173,11 @@ func serve(args []string) error {
 		log.Info("shutting down")
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return hs.Shutdown(sctx)
+		err := hs.Shutdown(sctx)
+		if serr := db.SaveModels(context.Background(), srv.Models.Snapshot(), time.Now()); serr != nil {
+			log.Error("model save on shutdown", "err", serr)
+		}
+		return err
 	}
 	return nil
 }
@@ -352,4 +364,20 @@ func tlsConfig(cfg *config.Config) (*tls.Config, error) {
 	t.MinVersion = tls.VersionTLS12
 	t.NextProtos = append([]string{"h2", "http/1.1"}, t.NextProtos...)
 	return t, nil
+}
+
+// modelSaver persists model state every five minutes.
+func modelSaver(ctx context.Context, srv *api.Server, db store.Store, log *slog.Logger) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := db.SaveModels(ctx, srv.Models.Snapshot(), time.Now()); err != nil {
+				log.Error("model save", "err", err)
+			}
+		}
+	}
 }

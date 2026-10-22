@@ -121,6 +121,9 @@ type Store interface {
 	// the same canvas hash was seen with a different seed within window.
 	CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash string, now time.Time, window time.Duration) (conflict bool, err error)
 
+	SaveModels(ctx context.Context, snap map[string][]byte, now time.Time) error
+	LoadModels(ctx context.Context) (map[string][]byte, error)
+
 	ListEntries(ctx context.Context, siteID string, now time.Time) ([]ListEntry, error)
 	AddListEntry(ctx context.Context, e *ListEntry) error
 	DeleteListEntry(ctx context.Context, siteID string, id int64) error

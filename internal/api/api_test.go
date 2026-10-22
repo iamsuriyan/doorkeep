@@ -316,3 +316,15 @@ func anyStrings(v any) []string {
 	}
 	return out
 }
+
+func (h *harness) postForm(path string, v url.Values) map[string]any {
+	h.t.Helper()
+	res, err := http.Post(h.http.URL+path, "application/x-www-form-urlencoded", bytes.NewBufferString(v.Encode()))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return out
+}

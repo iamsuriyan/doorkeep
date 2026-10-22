@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/nonce"
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
+	"github.com/iamsuriyan/doorkeep/internal/scoring/model"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
 	"github.com/iamsuriyan/doorkeep/internal/signals/ipintel"
 	signet "github.com/iamsuriyan/doorkeep/internal/signals/net"
@@ -178,8 +180,18 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	res := s.Rules.Eval(rules.Context(feats.Env(), n.Action, interactive(site)))
 	listAction, listCode := s.matchLists(ctx, site.ID, ip, info, fpHash, r.UserAgent(), now)
 	th := site.ThresholdsFor(n.Action)
+	mr := s.Models.Score(site.ID, feats)
 	d := scoring.CombineWithFloor(res.Risk, res.Floor, toReasons(res.Hits), toReasons(res.Shadow), res.ShadowRisk,
-		0, 0, listAction, listCode, th, site.Mode)
+		mr.Risk, mr.Weight, listAction, listCode, th, site.Mode)
+	if slices.ContainsFunc(d.Reasons, func(r scoring.Reason) bool { return r.Code == "MODEL_ANOMALY" }) {
+		for _, c := range mr.Contributions {
+			d.Reasons = append(d.Reasons, scoring.Reason{Code: "MODEL:" + c.Feature})
+		}
+	}
+	if mr.ShadowLR >= 0 {
+		d.Shadow = append(d.Shadow, scoring.Reason{Code: "MODEL_SUPERVISED", Weight: int(float64(mr.ShadowLR) * model.WeightPromoted)})
+	}
+	s.Models.ObserveAllowed(site.ID, feats, d.Risk, d.WouldBe)
 
 	ev := &store.Event{
 		ID: n.EventID, SiteID: site.ID, TS: now, Action: n.Action, Risk: d.Risk, Outcome: d.Outcome, WouldBe: d.WouldBe,

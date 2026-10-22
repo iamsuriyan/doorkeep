@@ -8,6 +8,7 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/challenge/visual"
 	"github.com/iamsuriyan/doorkeep/internal/nonce"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
+	"github.com/iamsuriyan/doorkeep/internal/scoring/model"
 )
 
 const visualAttempts = 3
@@ -92,6 +93,9 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 		})
 		if err != nil || n2.State == nonce.Burned {
 			_ = s.Store.UpdateEventChallenge(ctx, n.EventID, "visual", false, max(n.Risk, site.ThresholdsFor(n.Action).Block), scoring.Block, nil)
+			if ev, err := s.Store.GetEvent(ctx, n.EventID); err == nil {
+				s.Models.Label(site.ID, ev.Features, true, model.WeightWeak)
+			}
 			clientError(w, http.StatusConflict, "challenge-exhausted")
 			return
 		}
@@ -114,6 +118,7 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 		}
 	}
 	_ = s.Store.UpdateEventChallenge(ctx, ev.ID, "visual", true, d.Risk, d.Outcome, d.Reasons)
+	s.Models.Label(site.ID, ev.Features, false, model.WeightWeak)
 	s.mintAndRespond(w, r, site, n, d, "visual", []nonce.State{nonce.ChallengedVisual})
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/challenge/visual"
 	"github.com/iamsuriyan/doorkeep/internal/config"
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
+	"github.com/iamsuriyan/doorkeep/internal/scoring/model"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
 	"github.com/iamsuriyan/doorkeep/internal/signals/ipintel"
 	"github.com/iamsuriyan/doorkeep/internal/signals/velocity"
@@ -41,6 +42,7 @@ type Server struct {
 	IP     *ipintel.Store
 	Vel    *velocity.Tracker
 	Visual *visual.Generator
+	Models *model.Registry
 	Log    *slog.Logger
 	Now    func() time.Time
 	mux    *http.ServeMux
@@ -56,6 +58,7 @@ func New(cfg *config.Config, st store.Store, rs *rules.Set, log *slog.Logger) *S
 	ring.Now = func() time.Time { return s.Now() }
 	s.Vel = velocity.New(func() time.Time { return s.Now() })
 	s.Visual = visual.New(cfg.SecretBytes())
+	s.Models = model.NewRegistry(func() time.Time { return s.Now() })
 	s.routes()
 	return s
 }
