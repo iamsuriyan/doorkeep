@@ -36,6 +36,10 @@ type Rule struct {
 	Weight        int    `yaml:"weight" json:"weight"`
 	Mode          Mode   `yaml:"mode,omitempty" json:"mode,omitempty"`
 	Informational bool   `yaml:"informational,omitempty" json:"informational,omitempty"`
+	// Floor marks a rule as proof rather than evidence: when it fires, the
+	// rules risk is at least its weight, so negative "human evidence" rules
+	// (which an attacker can replay) can never cancel it.
+	Floor bool `yaml:"floor,omitempty" json:"floor,omitempty"`
 	Description   string `yaml:"description,omitempty" json:"description,omitempty"`
 
 	when   *vm.Program
@@ -128,6 +132,7 @@ type Result struct {
 func (s *Set) Eval(env map[string]any) Result {
 	var res Result
 	sum, shadowSum := 0, 0
+	floor, shadowFloor := 0, 0
 	for _, r := range s.rules {
 		if r.Mode == ModeOff {
 			continue
@@ -143,14 +148,21 @@ func (s *Set) Eval(env map[string]any) Result {
 			h.Shadow = true
 			res.Shadow = append(res.Shadow, h)
 			shadowSum += r.Weight
+			if r.Floor && r.Weight > shadowFloor {
+				shadowFloor = r.Weight
+			}
 			continue
 		}
 		res.Hits = append(res.Hits, h)
 		sum += r.Weight
 		shadowSum += r.Weight
+		if r.Floor {
+			floor = max(floor, r.Weight)
+			shadowFloor = max(shadowFloor, r.Weight)
+		}
 	}
-	res.Risk = clamp(sum)
-	res.ShadowRisk = clamp(shadowSum)
+	res.Risk = max(clamp(sum), floor)
+	res.ShadowRisk = max(clamp(shadowSum), shadowFloor)
 	sortHits(res.Hits)
 	sortHits(res.Shadow)
 	return res

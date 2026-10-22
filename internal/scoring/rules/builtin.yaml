@@ -9,6 +9,9 @@
 #   where farbling applies) because privacy browsers lie by design.
 # - Behaviour rules require an automation marker or an impossibility, never
 #   mere absence: keyboard-only and screen-reader users have no pointer data.
+# - `floor: true` marks proof rather than evidence: the rules risk is at least
+#   that rule's weight, so negative human-evidence rules (which an attacker can
+#   replay) can never cancel it.
 # - Every rule change must update the golden tests in rules_test.go.
 
 # ---------- automation markers ----------
@@ -25,6 +28,7 @@
 - id: AUTOMATION_GLOBALS
   when: "auto.leaks >= 1"
   weight: 50
+  floor: true
   description: Known automation framework globals present (cdc_, __playwright, __puppeteer, ...)
 
 - id: CDP_RUNTIME_LEAK
@@ -35,6 +39,7 @@
 - id: HEADLESS_UA
   when: "auto.headless_ua == 1"
   weight: 60
+  floor: true
   description: HeadlessChrome in the user agent
 
 - id: WINDOW_GEOMETRY_ZERO
@@ -195,6 +200,12 @@
   description: Natural, trusted keyboard rhythm observed
 
 # ---------- timing truth ----------
+- id: SUBMIT_TOO_FAST
+  when: "t.elapsed_s < 0.04"
+  weight: 40
+  floor: true
+  description: Submitted less than 40 ms after the session was issued (no real collection happened)
+
 - id: CLIENT_CLOCK_FORGED
   when: "t.elapsed_mismatch == 1"
   weight: 35
@@ -214,6 +225,7 @@
 - id: REPLAY_CANVAS_SEED
   when: "net.canvas_seed_conflict == 1"
   weight: 90
+  floor: true
   description: A fingerprint captured with one nonce was replayed with another
 
 - id: ORIGIN_CHANGED
@@ -296,6 +308,7 @@
 - id: IP_DROP_LIST
   when: "net.ip_drop == 1"
   weight: 70
+  floor: true
   description: Request from a network on the Spamhaus DROP list
 
 - id: TIMEZONE_IP_COUNTRY_MISMATCH

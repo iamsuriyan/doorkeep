@@ -165,3 +165,19 @@ func TestCompileRejectsTypos(t *testing.T) {
 		t.Fatal("unknown feature key compiled")
 	}
 }
+
+func TestHumanEvidenceCannotCancelProof(t *testing.T) {
+	f := scoring.NewFeatures()
+	f.SetBool("net.canvas_seed_conflict", true)
+	f.Set("beh.ptr_samples", 200)
+	f.Set("beh.ptr_straightness", 0.5)
+	f.Set("beh.ptr_interval_cv", 0.5)
+	f.Set("beh.untrusted_frac", 0)
+	f.Set("beh.key_count", 30)
+	f.Set("beh.key_hold_cv", 0.3)
+	f.Set("beh.key_interval_cv", 0.5)
+	r := eval(t, f, "signup")
+	if r.Risk < 90 {
+		t.Fatalf("replay proof cancelled by replayed behaviour: risk %d hits %v", r.Risk, ids(r.Hits))
+	}
+}
