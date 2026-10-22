@@ -2,6 +2,8 @@ module github.com/iamsuriyan/doorkeep
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/expr-lang/expr v1.17.8
 	github.com/jackc/pgx/v5 v5.11.0
