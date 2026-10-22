@@ -142,6 +142,9 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		NowMS:     float64(now.UnixMilli()),
 	})
 	signet.Analyze(feats, r, p.FP.UA, cls.Langs, cls)
+	ja4, offersH2, h2, h2Text := s.connPrints(r)
+	hdrFamily, _ := payload.UAFamily(r.UserAgent())
+	applyConnFeatures(feats, ja4, offersH2, h2, h2Text, hdrFamily, payload.OSFamily(r.UserAgent()))
 	feats.SetBool("net.origin_mismatch", origin != n.Origin)
 	feats.SetBool("net.ua_changed", pseudo.UAHash(r.UserAgent()) != n.UAHash)
 	feats.SetBool("net.ip24_changed", s.Keys.IPHash(ip, now) != n.IPHash)

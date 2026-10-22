@@ -30,7 +30,10 @@ func TestLiveData(t *testing.T) {
 	t.Logf("load %s, heap +%d MB, %v", time.Since(start).Round(time.Millisecond), (after.HeapAlloc-before.HeapAlloc)>>20, db.Counts())
 	tor, _ := os.ReadFile(dir + "/" + FileTor)
 	torIP := strings.TrimSpace(strings.SplitN(string(tor), "\n", 2)[0])
-	for _, c := range []struct{ ip, class string; asn uint32 }{
+	for _, c := range []struct {
+		ip, class string
+		asn       uint32
+	}{
 		{"8.8.8.8", "hosting", 15169},
 		{"52.95.110.1", "hosting", 16509},
 		{"159.89.0.1", "hosting", 14061},

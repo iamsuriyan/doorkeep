@@ -35,6 +35,12 @@ type Config struct {
 	// IPDataAutoUpdate downloads IP intelligence weekly. Disable for
 	// air-gapped installs and run `doorkeep ipdata update` yourself.
 	IPDataAutoUpdate bool `yaml:"ipdata_auto_update"`
+	// TLS: terminate TLS in doorkeep so JA4 and HTTP/2 fingerprints are
+	// available. Either cert/key files or ACME domains (TLS-ALPN-01, port 443).
+	TLSCert         string   `yaml:"tls_cert"`
+	TLSKey          string   `yaml:"tls_key"`
+	AutocertDomains []string `yaml:"autocert_domains"`
+	AutocertEmail   string   `yaml:"autocert_email"`
 
 	trusted []netip.Prefix
 }
@@ -80,6 +86,12 @@ func Load(path string) (*Config, error) {
 	env("DOORKEEP_PUBLIC_URL", &c.PublicURL)
 	env("DOORKEEP_SECRET", &c.Secret)
 	env("DOORKEEP_LOG_LEVEL", &c.LogLevel)
+	env("DOORKEEP_TLS_CERT", &c.TLSCert)
+	env("DOORKEEP_TLS_KEY", &c.TLSKey)
+	env("DOORKEEP_AUTOCERT_EMAIL", &c.AutocertEmail)
+	if v := os.Getenv("DOORKEEP_AUTOCERT_DOMAINS"); v != "" {
+		c.AutocertDomains = strings.Split(v, ",")
+	}
 	if v := os.Getenv("DOORKEEP_IPDATA_AUTO_UPDATE"); v != "" {
 		c.IPDataAutoUpdate = v == "1" || strings.EqualFold(v, "true")
 	}
@@ -139,6 +151,12 @@ func (c *Config) validate() error {
 		}
 		c.trusted = append(c.trusted, pf.Masked())
 	}
+	if (c.TLSCert == "") != (c.TLSKey == "") {
+		return errors.New("config: tls_cert and tls_key must be set together")
+	}
+	if c.TLSCert != "" && len(c.AutocertDomains) > 0 {
+		return errors.New("config: use either tls_cert/tls_key or autocert_domains, not both")
+	}
 	if c.TokenTTL <= 0 || c.TokenTTL > time.Hour {
 		return errors.New("config: token_ttl must be in (0, 1h]")
 	}
@@ -151,6 +169,9 @@ func (c *Config) Revalidate() error {
 	c.trusted = nil
 	return c.validate()
 }
+
+// TLSEnabled reports whether doorkeep terminates TLS itself.
+func (c *Config) TLSEnabled() bool { return c.TLSCert != "" || len(c.AutocertDomains) > 0 }
 
 // IPDataDir is where IP intelligence files live.
 func (c *Config) IPDataDir() string { return filepath.Join(c.DataDir, "ipdata") }

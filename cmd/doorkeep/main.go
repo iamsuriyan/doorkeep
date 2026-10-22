@@ -10,11 +10,13 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +24,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/iamsuriyan/doorkeep/internal/api"
 	"github.com/iamsuriyan/doorkeep/internal/config"
@@ -132,10 +136,25 @@ func serve(args []string) error {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 	}
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return err
+	}
+	if cfg.TLSEnabled() {
+		tlsCfg, err := tlsConfig(cfg)
+		if err != nil {
+			return err
+		}
+		if ln, err = api.ConfigureTLS(hs, ln, tlsCfg); err != nil {
+			return err
+		}
+	} else {
+		log.Warn("TLS not terminated by doorkeep: JA4 and HTTP/2 fingerprints are only available via Doorkeep-TLS/Doorkeep-H2 headers from trusted proxies")
+	}
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("doorkeep listening", "addr", cfg.Listen, "version", version, "data_dir", cfg.DataDir, "rules", len(rs.Rules()))
-		errc <- hs.ListenAndServe()
+		log.Info("doorkeep listening", "addr", cfg.Listen, "tls", cfg.TLSEnabled(), "version", version, "data_dir", cfg.DataDir, "rules", len(rs.Rules()))
+		errc <- hs.Serve(ln)
 	}()
 	select {
 	case err := <-errc:
@@ -313,4 +332,24 @@ func ipdata(args []string) error {
 		fmt.Println("sources:", strings.Join(db.Sources, "; "))
 	}
 	return err
+}
+
+func tlsConfig(cfg *config.Config) (*tls.Config, error) {
+	if cfg.TLSCert != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if err != nil {
+			return nil, fmt.Errorf("tls: %w", err)
+		}
+		return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, nil
+	}
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(cfg.AutocertDomains...),
+		Cache:      autocert.DirCache(filepath.Join(cfg.DataDir, "acme")),
+		Email:      cfg.AutocertEmail,
+	}
+	t := m.TLSConfig() // includes acme-tls/1 for TLS-ALPN-01 on this listener
+	t.MinVersion = tls.VersionTLS12
+	t.NextProtos = append([]string{"h2", "http/1.1"}, t.NextProtos...)
+	return t, nil
 }

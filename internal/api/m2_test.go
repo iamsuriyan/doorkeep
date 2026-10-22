@@ -149,3 +149,5 @@ func TestUntrustedXFFIgnored(t *testing.T) {
 		t.Fatalf("X-Forwarded-For trusted from an untrusted peer: %v", dk)
 	}
 }
+
+func storeFilterAll() store.EventFilter { return store.EventFilter{SiteID: "site1", Limit: 10} }

@@ -232,3 +232,8 @@ func validAction(a string) bool {
 		return !(r == '_' || r == '-' || r == '.' || r == '/' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
 	})
 }
+
+func netipFromIP(ip net.IP) (netip.Addr, bool) {
+	a, ok := netip.AddrFromSlice(ip)
+	return a.Unmap(), ok
+}
