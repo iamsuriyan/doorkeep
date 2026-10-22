@@ -22,6 +22,8 @@ import (
 // search, so doorkeep cannot be configured into a cross-site tracker.
 func (s *Server) adminRoutes(m *http.ServeMux) {
 	a := s.adminAuth
+	m.HandleFunc("GET /admin/", s.handleDashboard)
+	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/admin/", http.StatusFound) })
 	m.HandleFunc("POST /admin/v1/login", s.handleLogin)
 	m.HandleFunc("POST /admin/v1/logout", s.handleLogout)
 	m.HandleFunc("GET /admin/v1/me", a(s.handleMe))
@@ -553,4 +555,23 @@ func (s *Server) adminFeatures(w http.ResponseWriter, r *http.Request) {
 		out = append(out, fd{d.Key(), d.Kind.String(), d.Desc, d.Model})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleDashboard serves the embedded dashboard SPA with a strict CSP.
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/admin/")
+	ctype := map[string]string{"app.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}[name]
+	if ctype == "" {
+		name, ctype = "index.html", "text/html; charset=utf-8"
+	}
+	b, err := assets.ReadFile("assets/admin/" + name)
+	if err != nil {
+		http.Error(w, "dashboard not built: run make dashboard", http.StatusNotFound)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", ctype)
+	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	h.Set("X-Frame-Options", "DENY")
+	w.Write(b)
 }

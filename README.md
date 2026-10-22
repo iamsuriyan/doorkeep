@@ -38,7 +38,17 @@ docker compose -f deploy/docker-compose.yml run --rm doorkeep \
   site create --name mysite --origin https://example.com
 ```
 
-`site create` prints a public site key and a secret that is shown once.
+`site create` prints a public site key and a secret that is shown once. For
+the dashboard at `/admin/`, create an admin (the password is read from stdin):
+
+```sh
+docker compose -f deploy/docker-compose.yml run --rm doorkeep admin create --user ops
+```
+
+The dashboard shows traffic by outcome, the reasons behind decisions, every
+event with its signals, per-site rule overrides with a rule lab that replays
+a change over the last week before you enforce it, allow and deny lists,
+model status, and a privacy data map.
 
 Proxy `/_dk/` on your site to doorkeep (same origin, no CORS, not blockable as
 a third-party host), then add the snippet and a placeholder inside your form:
@@ -78,9 +88,10 @@ doorkeep.
 
 ## Status
 
-Pre-alpha. Milestones 1 (core scoring loop), 2 (server-side signals: IP
-intelligence, velocity, JA4 and HTTP/2 fingerprints) and 3 (proof-of-work
-plus an accessible visual and audio challenge) are done.
+Pre-alpha. Done: the core scoring loop (M1); server-side signals: IP
+intelligence, velocity, JA4 and HTTP/2 fingerprints (M2); proof of work plus
+an accessible visual and audio challenge (M3); the learned model layer (M4);
+the admin API and dashboard (M5).
 
 | Setup (measured end to end in real browsers) | Risk | Outcome |
 |---|---|---|
@@ -93,8 +104,8 @@ plus an accessible visual and audio challenge) are done.
 | Real Chromium, no automation | 0 | allow |
 
 Known gaps are tracked in the open in
-[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next: the model layer
-(M4), dashboard (M5), integrations and edge mode (M6), cluster and release (M7).
+[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next: integrations and
+edge mode (M6), then cluster support and release (M7).
 
 ### Challenges
 

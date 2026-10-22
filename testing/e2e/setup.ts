@@ -31,6 +31,8 @@ export default async function setup() {
   const sitekey = /site key[^:]*:\s*(\S+)/.exec(out)![1];
   const secret = /secret[^:]*:\s*(\S+)/.exec(out)![1];
 
+  execFileSync(join(ROOT, "bin/doorkeep"), ["admin", "create", "--user", "ops"], { env: dkEnv, input: "correct horse battery staple\n" });
+
   const procs: ChildProcess[] = [];
   procs.push(spawn(join(ROOT, "bin/doorkeep"), ["serve"], { env: dkEnv, stdio: "inherit" }));
   await waitFor(`http://127.0.0.1:${DK_PORT}/healthz`);

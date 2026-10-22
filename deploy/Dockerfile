@@ -1,21 +1,24 @@
-# Build the snippet, then a static Go binary, then a distroless image.
+# Build the snippet and dashboard, then a static Go binary, then a
+# distroless image.
 FROM node:22-alpine AS snippet
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/snippet/package.json web/snippet/
+COPY web/dashboard/package.json web/dashboard/
 COPY testing/e2e/package.json testing/e2e/
-RUN pnpm install --frozen-lockfile --filter @doorkeep/snippet
+RUN pnpm install --frozen-lockfile --filter @doorkeep/snippet --filter @doorkeep/dashboard
 COPY web/snippet web/snippet
+COPY web/dashboard web/dashboard
 COPY internal/api/assets internal/api/assets
-RUN pnpm --filter @doorkeep/snippet build
+RUN pnpm --filter @doorkeep/snippet build && pnpm --filter @doorkeep/dashboard build
 
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=snippet /src/internal/api/assets/dk.js internal/api/assets/dk.js
+COPY --from=snippet /src/internal/api/assets internal/api/assets
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /doorkeep ./cmd/doorkeep
 # Pre-create the data dir owned by the distroless nonroot user (65532) so a

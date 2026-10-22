@@ -31,8 +31,9 @@ func newAgg() *agg {
 func (a *agg) add(e *store.Event) {
 	a.Total++
 	a.Outcomes[string(e.Outcome)]++
+	// Top reasons explain risk, so only positive contributions count.
 	for _, r := range e.Reasons {
-		if r.Weight != 0 || len(r.Code) > 8 && r.Code[:8] == "PROFILE_" {
+		if r.Weight > 0 {
 			a.Reasons[r.Code]++
 		}
 	}

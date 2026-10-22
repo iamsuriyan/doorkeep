@@ -1,3 +1,4 @@
 packages:
   - web/snippet
+  - web/dashboard
   - testing/e2e
