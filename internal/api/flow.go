@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/iamsuriyan/doorkeep/internal/challenge/pow"
@@ -11,18 +13,23 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
+	"github.com/iamsuriyan/doorkeep/internal/signals/ipintel"
 	signet "github.com/iamsuriyan/doorkeep/internal/signals/net"
 	"github.com/iamsuriyan/doorkeep/internal/signals/payload"
+	"github.com/iamsuriyan/doorkeep/internal/signals/velocity"
 	"github.com/iamsuriyan/doorkeep/internal/store"
 	"github.com/iamsuriyan/doorkeep/internal/token"
 )
 
 // Challenge credits (design section 4.5).
+// Session rate limits (design section 3.5), applied before any work.
 const (
-	creditPoW      = 20
-	maxAttempts    = 3
-	canvasWindow   = 24 * time.Hour
-	sessionBodyMax = 1024
+	sessionPerIPPerMin = 60
+	sessionPer24PerMin = 600
+	creditPoW          = 20
+	maxAttempts        = 3
+	canvasWindow       = 24 * time.Hour
+	sessionBodyMax     = 1024
 )
 
 type sessionReq struct {
@@ -65,6 +72,14 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.Now()
 	ip := s.clientIP(r)
+	s.Vel.Add("sess-ip:" + ip.String())
+	s.Vel.Add("sess-24:" + pseudo.Prefix(ip))
+	if s.Vel.Count("sess-ip:"+ip.String(), time.Minute) > sessionPerIPPerMin ||
+		s.Vel.Count("sess-24:"+pseudo.Prefix(ip), time.Minute) > sessionPer24PerMin {
+		w.Header().Set("Retry-After", "30")
+		clientError(w, http.StatusTooManyRequests, "rate-limited")
+		return
+	}
 	n := &nonce.Nonce{
 		ID: nonce.NewID(), SiteID: site.ID, Origin: origin, Action: req.Action, Seed: nonce.NewSeed(),
 		IssuedAt: now, ExpiresAt: now.Add(nonce.TTL), State: nonce.Issued,
@@ -138,12 +153,16 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fpHash := s.Keys.FPHash(site.ID, now, pseudo.FPInput{
-		CanvasHash: cls.CanvasHash, GLHash: cls.GLHash, FontMask: cls.FontMask, ScreenKey: cls.ScreenKey,
+		CanvasHash: cls.CanvasStatic, GLHash: cls.GLHash, FontMask: cls.FontMask, ScreenKey: cls.ScreenKey,
 		TZ: p.FP.TZ, Langs: cls.Langs, UAFamily: cls.UAFamily, OSFamily: cls.OSFamily, HCBucket: cls.HCBucket,
 	})
 
+	info := s.IP.Get().Lookup(ip)
+	applyIPInfo(feats, info, cls.TZCountry)
+	s.applyVelocity(feats, site.ID, ip, fpHash, cls, info)
+
 	res := s.Rules.Eval(rules.Context(feats.Env(), n.Action, interactive(site)))
-	listAction, listCode := s.matchLists(ctx, site.ID, ip, fpHash, r.UserAgent(), now)
+	listAction, listCode := s.matchLists(ctx, site.ID, ip, info, fpHash, r.UserAgent(), now)
 	th := site.ThresholdsFor(n.Action)
 	d := scoring.CombineWithFloor(res.Risk, res.Floor, toReasons(res.Hits), toReasons(res.Shadow), res.ShadowRisk,
 		0, 0, listAction, listCode, th, site.Mode)
@@ -152,7 +171,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		ID: n.EventID, SiteID: site.ID, TS: now, Action: n.Action, Risk: d.Risk, Outcome: d.Outcome, WouldBe: d.WouldBe,
 		Reasons: d.Reasons, Shadow: d.Shadow, ShadowRisk: d.ShadowRisk, Features: feats, FPHash: fpHash,
 		IP24Hash: s.Keys.IPHash(ip, now), UAFamily: cls.UAFamily, UAMajor: cls.UAMajor, OSFamily: cls.OSFamily,
-		ASNClass: feats.Cat["net.asn_class"],
+		ASNClass: info.Class, ASN: int(info.ASN), Country: info.Country,
 	}
 	if err := s.Store.InsertEvent(ctx, ev); err != nil {
 		s.Log.Error("event insert", "err", err)
@@ -231,6 +250,7 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	params := pow.Params{Salt: n.PoWSalt, Bits: n.PoWBits, N: n.PoWN}
 	if !pow.Verify(n.ID, params, req.Sol) {
+		s.Vel.Add("chfail:" + s.clientIP(r).String())
 		_, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedPoW}, nonce.ChallengedPoW, now, func(x *nonce.Nonce) {
 			x.Attempts++
 			if x.Attempts >= maxAttempts {
@@ -264,4 +284,58 @@ func toReasons(h []rules.Hit) []scoring.Reason {
 		out = append(out, scoring.Reason{Code: x.ID, Weight: x.Weight})
 	}
 	return out
+}
+
+// applyIPInfo sets network-reputation features.
+func applyIPInfo(f scoring.Features, info ipintel.Info, tzCountry string) {
+	f.SetCat("net.asn_class", info.Class)
+	f.SetBool("net.ip_tor", info.Tor)
+	f.SetBool("net.ip_drop", info.Drop)
+	f.SetBool("net.ip_known_crawler", info.Crawler != "")
+	if info.Country != "" {
+		f.SetCat("net.ip_country", info.Country)
+	}
+	switch {
+	case info.Country == "" || tzCountry == "":
+		f.Set("net.tz_ip_country_match", 2)
+	case info.Country == tzCountry:
+		f.Set("net.tz_ip_country_match", 1)
+	default:
+		f.Set("net.tz_ip_country_match", 0)
+	}
+}
+
+// applyVelocity records this submit and reads back windowed counts. Keys
+// live in memory only (raw IP for at most an hour, design section 6.1).
+func (s *Server) applyVelocity(f scoring.Features, siteID string, ip netip.Addr, fpHash string, cls payload.Classified, info ipintel.Info) {
+	v := s.Vel
+	ipKey := "ip:" + ip.String()
+	p24 := pseudo.Prefix(ip)
+	k24 := "24:" + siteID + ":" + p24
+	kfp := "fp:" + fpHash
+	ksite := "site:" + siteID
+	asn := "asn:" + strconv.FormatUint(uint64(info.ASN), 10)
+	v.Add(ipKey)
+	v.Add(k24, "fp:"+fpHash)
+	v.Add(kfp, asn, "24:"+p24)
+	v.Add(ksite)
+	kcv := ""
+	if cls.CanvasStatic != "" {
+		kcv = "cv:" + siteID + ":" + cls.CanvasStatic
+		v.Add(kcv, "ua:"+cls.UAFamily)
+	}
+	for _, w := range velocity.Windows {
+		f.Set("vel.ip_submits_"+w.Name, float64(v.Count(ipKey, w.Dur)))
+		f.Set("vel.ip24_submits_"+w.Name, float64(v.Count(k24, w.Dur)))
+		f.Set("vel.ip24_distinct_fp_"+w.Name, float64(v.Distinct(k24, w.Dur, "fp:")))
+		f.Set("vel.fp_submits_"+w.Name, float64(v.Count(kfp, w.Dur)))
+		f.Set("vel.fp_distinct_ip24_"+w.Name, float64(v.Distinct(kfp, w.Dur, "24:")))
+		f.Set("vel.fp_distinct_asn_"+w.Name, float64(v.Distinct(kfp, w.Dur, "asn:")))
+		f.Set("vel.site_submits_"+w.Name, float64(v.Count(ksite, w.Dur)))
+		if kcv != "" {
+			f.Set("vel.canvas_distinct_ua_"+w.Name, float64(v.Distinct(kcv, w.Dur, "ua:")))
+		}
+	}
+	f.Set("vel.ip_challenge_fail_1h", float64(v.Count("chfail:"+ip.String(), time.Hour)))
+	f.Set("vel.fp_interval_cv", v.IntervalCV(kfp))
 }

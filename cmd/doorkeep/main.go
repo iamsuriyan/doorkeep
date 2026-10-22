@@ -29,6 +29,7 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
+	"github.com/iamsuriyan/doorkeep/internal/signals/ipintel"
 	"github.com/iamsuriyan/doorkeep/internal/store"
 	"github.com/iamsuriyan/doorkeep/internal/store/sqlite"
 )
@@ -48,6 +49,8 @@ func main() {
 		err = site(os.Args[2:])
 	case "migrate":
 		err = migrate(os.Args[2:])
+	case "ipdata":
+		err = ipdata(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("doorkeep", version)
 	case "help", "-h", "--help":
@@ -69,6 +72,7 @@ Usage:
   doorkeep serve [--config path]
   doorkeep site create --name NAME --origin URL [--origin URL ...] [--mode enforce|monitor|challenge_only]
   doorkeep site list
+  doorkeep ipdata update [--config path]
   doorkeep migrate [--config path]
   doorkeep version
 
@@ -112,10 +116,12 @@ func serve(args []string) error {
 		return err
 	}
 	srv := api.New(cfg, db, rs, log)
+	loadIPData(srv.IP, cfg, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go janitor(ctx, db, cfg, log)
+	go ipdataRefresher(ctx, srv.IP, cfg, log)
 
 	hs := &http.Server{
 		Addr:              cfg.Listen,
@@ -243,4 +249,68 @@ func randToken(n int) string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func loadIPData(st *ipintel.Store, cfg *config.Config, log *slog.Logger) {
+	db, err := ipintel.Load(cfg.IPDataDir())
+	if err != nil {
+		log.Error("ipdata load", "err", err)
+		return
+	}
+	st.Set(db)
+	c := db.Counts()
+	if c["v4"] == 0 {
+		log.Warn("no IP intelligence loaded; network signals are off until `doorkeep ipdata update` runs", "dir", cfg.IPDataDir())
+		return
+	}
+	log.Info("ipdata loaded", "v4_ranges", c["v4"], "v6_ranges", c["v6"], "tor", c["tor"], "drop", c["drop"], "sources", db.Sources)
+}
+
+// ipdataRefresher downloads fresh data weekly (if enabled) and reloads.
+func ipdataRefresher(ctx context.Context, st *ipintel.Store, cfg *config.Config, log *slog.Logger) {
+	stale := func() bool {
+		fi, err := os.Stat(filepath.Join(cfg.IPDataDir(), ipintel.FileASN))
+		return err != nil || time.Since(fi.ModTime()) > 7*24*time.Hour
+	}
+	for {
+		if cfg.IPDataAutoUpdate && stale() {
+			uctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			err := ipintel.Update(uctx, cfg.IPDataDir(), nil)
+			cancel()
+			if err != nil {
+				log.Warn("ipdata update incomplete", "err", err)
+			}
+			loadIPData(st, cfg, log)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(6 * time.Hour):
+		}
+	}
+}
+
+func ipdata(args []string) error {
+	if len(args) == 0 || args[0] != "update" {
+		return errors.New("ipdata: expected update")
+	}
+	fs := flag.NewFlagSet("ipdata update", flag.ExitOnError)
+	cfgPath := fs.String("config", os.Getenv("DOORKEEP_CONFIG"), "path to config YAML")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	err = ipintel.Update(context.Background(), cfg.IPDataDir(), nil)
+	db, lerr := ipintel.Load(cfg.IPDataDir())
+	if lerr == nil {
+		c := db.Counts()
+		fmt.Printf("ipdata in %s: %d v4 ranges, %d v6 ranges, %d Tor exits, %d DROP prefixes (%s)\n",
+			cfg.IPDataDir(), c["v4"], c["v6"], c["tor"], c["drop"], time.Since(start).Round(time.Millisecond))
+		fmt.Println("sources:", strings.Join(db.Sources, "; "))
+	}
+	return err
 }

@@ -1,0 +1,80 @@
+# Curated hosting / cloud / VPS ASNs. One per line: ASN, then a free-text note.
+# Requests from these networks get the IP_DATACENTER signal (weight 20), which
+# alone never blocks. Reviewed by hand; do not add consumer ISPs, mobile
+# carriers, or networks whose egress is mostly end users (for example
+# Cloudflare 13335 carries WARP users and is deliberately absent).
+#
+# Hyperscalers
+16509 Amazon AWS (AMAZON-02)
+14618 Amazon AWS (AMAZON-AES)
+8987 Amazon EU
+15169 Google
+396982 Google Cloud Platform
+19527 Google
+8075 Microsoft Azure
+31898 Oracle Cloud
+45102 Alibaba Cloud
+37963 Alibaba Cloud (CN)
+132203 Tencent Cloud
+45090 Tencent
+136907 Huawei Cloud
+55990 Huawei Cloud
+# Developer clouds and VPS
+14061 DigitalOcean
+393406 DigitalOcean
+62567 DigitalOcean
+200130 DigitalOcean
+135340 DigitalOcean
+63949 Akamai Connected Cloud (Linode)
+20473 Vultr (Choopa)
+16276 OVHcloud
+24940 Hetzner
+213230 Hetzner Cloud
+212317 Hetzner
+51167 Contabo
+40021 Contabo US
+141995 Contabo Asia
+12876 Scaleway
+197540 netcup
+47583 Hostinger
+204915 Hostinger
+54290 Hostwinds
+3842 RamNode
+8560 IONOS
+46606 Unified Layer
+26496 GoDaddy
+398101 GoDaddy
+22612 Namecheap
+19318 Interserver
+32613 iWeb
+7979 Servers.com
+200350 Yandex Cloud
+49505 Selectel
+9123 Timeweb
+210644 Aeza
+216071 VDSina
+14956 Cloudzy (RouterHosting)
+53667 FranTech (BuyVM)
+36352 ColoCrossing
+8100 QuadraNet
+25820 IT7 Networks
+54600 PEG Tech
+40065 CNSERVERS
+62240 Clouvider
+3214 xTom
+# Dedicated / bulk hosting frequently used for automation and VPN egress
+60781 Leaseweb NL
+28753 Leaseweb DE
+30633 Leaseweb US
+9009 M247
+60068 Datacamp (CDN77)
+212238 Datacamp
+49981 WorldStream
+43350 NForce
+51852 Private Layer
+202425 IP Volume
+50673 Serverius
+18779 EGIHosting
+11878 tzulo
+23033 Wowrack
+63023 GTHost

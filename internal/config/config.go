@@ -32,6 +32,9 @@ type Config struct {
 	// Env: DOORKEEP_TOKEN_KEY (active) and DOORKEEP_TOKEN_KEY_OLD.
 	TokenKeys []TokenKey `yaml:"token_keys"`
 	LogLevel  string     `yaml:"log_level"`
+	// IPDataAutoUpdate downloads IP intelligence weekly. Disable for
+	// air-gapped installs and run `doorkeep ipdata update` yourself.
+	IPDataAutoUpdate bool `yaml:"ipdata_auto_update"`
 
 	trusted []netip.Prefix
 }
@@ -45,11 +48,12 @@ type TokenKey struct {
 // Defaults returns the default configuration.
 func Defaults() Config {
 	return Config{
-		Listen:         ":8080",
-		DataDir:        "./data",
-		TokenTTL:       5 * time.Minute,
-		EventRetention: 30 * 24 * time.Hour,
-		LogLevel:       "info",
+		Listen:           ":8080",
+		DataDir:          "./data",
+		TokenTTL:         5 * time.Minute,
+		EventRetention:   30 * 24 * time.Hour,
+		LogLevel:         "info",
+		IPDataAutoUpdate: true,
 	}
 }
 
@@ -76,6 +80,9 @@ func Load(path string) (*Config, error) {
 	env("DOORKEEP_PUBLIC_URL", &c.PublicURL)
 	env("DOORKEEP_SECRET", &c.Secret)
 	env("DOORKEEP_LOG_LEVEL", &c.LogLevel)
+	if v := os.Getenv("DOORKEEP_IPDATA_AUTO_UPDATE"); v != "" {
+		c.IPDataAutoUpdate = v == "1" || strings.EqualFold(v, "true")
+	}
 	if v := os.Getenv("DOORKEEP_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = strings.Split(v, ",")
 	}
@@ -137,6 +144,16 @@ func (c *Config) validate() error {
 	}
 	return nil
 }
+
+// Revalidate re-parses derived fields after the struct was changed in code
+// (tests and the admin API).
+func (c *Config) Revalidate() error {
+	c.trusted = nil
+	return c.validate()
+}
+
+// IPDataDir is where IP intelligence files live.
+func (c *Config) IPDataDir() string { return filepath.Join(c.DataDir, "ipdata") }
 
 // SecretBytes returns the decoded instance secret.
 func (c *Config) SecretBytes() []byte { b, _ := decodeKey(c.Secret); return b }

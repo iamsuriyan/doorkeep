@@ -124,7 +124,7 @@ func humanPayload(n string) payload.Payload {
 		FP: payload.FP{
 			UA: chromeUA, Scr: []float64{1920, 1080, 1920, 1040, 24, 1, 0}, TZ: "Asia/Kolkata", TZO: -330,
 			Lang: []string{"en-IN", "en"}, GL: []string{"Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11)"},
-			CV: payload.Canvas{H: "Ab3dEf9hIjk"}, AU: "Zm9vYmFyYmF6", FN: "PwAAAA", HC: 8, DM: 8, Tch: 16, MTP: 0, Feat: "_w8",
+			CV: payload.Canvas{H: "Ab3dEf9hIjk", S: "St4tIcCanvs"}, AU: "Zm9vYmFyYmF6", FN: "PwAAAA", HC: 8, DM: 8, Tch: 16, MTP: 0, Feat: "_w8",
 		},
 		Beh: payload.Beh{
 			Ptr: []float64{180, 5400, 0.42, 0.8, 37, 61, 0.55, 0.02, 0, 3, 40, 90, 30, 12, 5},

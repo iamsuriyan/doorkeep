@@ -25,8 +25,8 @@ function webgl(): [string, string] | undefined {
 
 /** Canvas drawn with the server seed so a captured hash cannot be replayed
  * under another nonce (design section 2.3 rule 5). */
-async function canvas(seed: string): Promise<{ h: string; b: boolean }> {
-  const draw = (): string | null =>
+async function canvas(seed: string): Promise<{ h: string; s?: string; b: boolean }> {
+  const draw = (seed: string): string | null =>
     safe(() => {
       const c = document.createElement("canvas");
       c.width = 240;
@@ -50,7 +50,7 @@ async function canvas(seed: string): Promise<{ h: string; b: boolean }> {
       x.fill();
       return c.toDataURL();
     }, null);
-  const url = draw();
+  const url = draw(seed);
   if (!url) return { h: "", b: true };
   const blank = safe(() => {
     const c = document.createElement("canvas");
@@ -59,7 +59,8 @@ async function canvas(seed: string): Promise<{ h: string; b: boolean }> {
     return c.toDataURL();
   }, "");
   if (url === blank) return { h: "", b: true };
-  return { h: await hash(url), b: false };
+  const fixed = draw("static");
+  return { h: await hash(url), s: fixed ? await hash(fixed) : undefined, b: false };
 }
 
 async function audio(): Promise<string | undefined> {

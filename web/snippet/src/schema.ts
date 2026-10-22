@@ -31,7 +31,7 @@ export interface Payload {
     tzo: number;
     lang: string[];
     gl?: [string, string];
-    cv: { h: string; b: boolean };
+    cv: { h: string; s?: string; b: boolean }; // h seeded (replay binding), s static (device identity)
     au?: string;
     fn?: string;
     hc: number;

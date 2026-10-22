@@ -94,10 +94,15 @@ type UAD struct {
 	Mobile   bool     `json:"m"`
 }
 
-// Canvas carries the canvas hash and blocked flag.
+// Canvas carries two canvas hashes and the blocked flag. H is drawn with
+// the session seed and binds the payload to its nonce (replay detection); S
+// is drawn with fixed content and is the stable device component used for
+// fingerprint velocity. Without S a real device would get a new
+// fingerprint every session.
 type Canvas struct {
-	H string `json:"h"` // base64url truncated SHA-256 (8 bytes)
-	B bool   `json:"b"` // blank / blocked
+	H string `json:"h"`           // seeded, base64url truncated SHA-256 (8 bytes)
+	S string `json:"s,omitempty"` // static, same encoding
+	B bool   `json:"b"`           // blank / blocked
 }
 
 // FP holds fingerprint-consistency inputs (design section 1.2 B).
@@ -243,10 +248,10 @@ func (p *Payload) Validate() error {
 			p.FP.UAD.Platform = p.FP.UAD.Platform[:maxBrandLen]
 		}
 	}
-	if len(p.FP.CV.H) > maxHashB64 || len(p.FP.AU) > maxHashB64 || len(p.FP.FN) > maxFontB64 || len(p.FP.Feat) > maxFeatB64 {
+	if len(p.FP.CV.H) > maxHashB64 || len(p.FP.CV.S) > maxHashB64 || len(p.FP.AU) > maxHashB64 || len(p.FP.FN) > maxFontB64 || len(p.FP.Feat) > maxFeatB64 {
 		return fmt.Errorf("%w: hash field too long", ErrInvalid)
 	}
-	if !isB64URL(p.N) || !isB64URL(p.FP.CV.H) || !isB64URL(p.FP.AU) || !isB64URL(p.FP.FN) || !isB64URL(p.FP.Feat) {
+	if !isB64URL(p.N) || !isB64URL(p.FP.CV.H) || !isB64URL(p.FP.CV.S) || !isB64URL(p.FP.AU) || !isB64URL(p.FP.FN) || !isB64URL(p.FP.Feat) {
 		return fmt.Errorf("%w: non-base64url hash field", ErrInvalid)
 	}
 	for _, arr := range [][]float64{p.FP.Scr, p.Auto.Geo, p.Beh.Ptr, p.Beh.Clk, p.Beh.Key, p.Beh.Scr, p.Beh.Foc, p.Beh.Raf, p.Env.Perf} {

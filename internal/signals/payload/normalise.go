@@ -279,20 +279,21 @@ func normaliseBehaviour(f scoring.Features, b *Beh) {
 
 // Classified holds request-scoped derived values. Never persisted raw.
 type Classified struct {
-	UAFamily    string
-	UAMajor     int
-	OSFamily    string
-	Mobile      bool
-	TZUTC       bool
-	TZCountry   string
-	LangPrimary string
-	Langs       []string
-	GPUClass    string
-	CanvasHash  string
-	GLHash      string
-	FontMask    string
-	ScreenKey   string
-	HCBucket    int
+	UAFamily     string
+	UAMajor      int
+	OSFamily     string
+	Mobile       bool
+	TZUTC        bool
+	TZCountry    string
+	LangPrimary  string
+	Langs        []string
+	GPUClass     string
+	CanvasHash   string // seeded: replay binding only
+	CanvasStatic string // unseeded: stable device component
+	GLHash       string
+	FontMask     string
+	ScreenKey    string
+	HCBucket     int
 }
 
 func classify(p *Payload) Classified {
@@ -315,6 +316,7 @@ func classify(p *Payload) Classified {
 	}
 	c.GPUClass = gpuClass(p.FP.GL, p.FP.CV.B)
 	c.CanvasHash = p.FP.CV.H
+	c.CanvasStatic = p.FP.CV.S
 	if p.FP.GL != nil {
 		c.GLHash = p.FP.GL[0] + "|" + p.FP.GL[1]
 	}
