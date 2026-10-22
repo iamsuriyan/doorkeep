@@ -33,3 +33,4 @@ examples/nextjs-signup/.next/
 examples/nextjs-signup/next-env.d.ts
 integrations/*/dist/
 testing/wordpress/.wc
+.pw-browsers/

@@ -9,6 +9,10 @@ jobs:
   browsers:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # One fixed location for install and test: the test step overrides HOME,
+      # which otherwise moves Playwright's default browser cache.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,6 +25,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @doorkeep/snippet build && pnpm --filter @doorkeep/dashboard build
+      # The Next.js example depends on the workspace packages' build output.
+      - run: pnpm --filter @doorkeep/verify build && pnpm --filter @doorkeep/next build
       - run: sudo apt-get update && sudo apt-get install -y xvfb
       - run: pnpm --filter e2e exec playwright install --with-deps chromium firefox
       - name: detection matrix
