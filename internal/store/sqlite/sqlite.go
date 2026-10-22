@@ -188,12 +188,12 @@ func (db *DB) ListSites(ctx context.Context) ([]*store.Site, error) {
 
 // ---------------- nonces ----------------
 
-const nonceCols = `id,site_id,origin,action,seed,issued_at,expires_at,state,ip_hash,ua_hash,pow_salt,pow_bits,pow_n,answer_mac,attempts,event_id,risk`
+const nonceCols = `id,site_id,origin,action,seed,issued_at,expires_at,state,ip_hash,ua_hash,pow_salt,pow_bits,pow_n,answer_mac,attempts,event_id,risk,floor`
 
 func (db *DB) Create(ctx context.Context, n *nonce.Nonce) error {
-	_, err := db.w.ExecContext(ctx, `INSERT INTO nonces(`+nonceCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := db.w.ExecContext(ctx, `INSERT INTO nonces(`+nonceCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		n.ID, n.SiteID, n.Origin, n.Action, n.Seed, ms(n.IssuedAt), ms(n.ExpiresAt), string(n.State),
-		n.IPHash, n.UAHash, n.PoWSalt, n.PoWBits, n.PoWN, n.AnswerMAC, n.Attempts, n.EventID, n.Risk)
+		n.IPHash, n.UAHash, n.PoWSalt, n.PoWBits, n.PoWN, n.AnswerMAC, n.Attempts, n.EventID, n.Risk, n.Floor)
 	return err
 }
 
@@ -202,7 +202,7 @@ func scanNonce(row scanner) (*nonce.Nonce, error) {
 	var issued, exp int64
 	var state string
 	err := row.Scan(&n.ID, &n.SiteID, &n.Origin, &n.Action, &n.Seed, &issued, &exp, &state,
-		&n.IPHash, &n.UAHash, &n.PoWSalt, &n.PoWBits, &n.PoWN, &n.AnswerMAC, &n.Attempts, &n.EventID, &n.Risk)
+		&n.IPHash, &n.UAHash, &n.PoWSalt, &n.PoWBits, &n.PoWN, &n.AnswerMAC, &n.Attempts, &n.EventID, &n.Risk, &n.Floor)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nonce.ErrNotFound
@@ -234,8 +234,8 @@ func (db *DB) Transition(ctx context.Context, id string, from []nonce.State, to 
 	if mutate != nil {
 		mutate(n)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE nonces SET state=?, expires_at=?, pow_salt=?, pow_bits=?, pow_n=?, answer_mac=?, attempts=?, event_id=?, risk=? WHERE id=?`,
-		string(n.State), ms(n.ExpiresAt), n.PoWSalt, n.PoWBits, n.PoWN, n.AnswerMAC, n.Attempts, n.EventID, n.Risk, n.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE nonces SET state=?, expires_at=?, pow_salt=?, pow_bits=?, pow_n=?, answer_mac=?, attempts=?, event_id=?, risk=?, floor=? WHERE id=?`,
+		string(n.State), ms(n.ExpiresAt), n.PoWSalt, n.PoWBits, n.PoWN, n.AnswerMAC, n.Attempts, n.EventID, n.Risk, n.Floor, n.ID)
 	if err != nil {
 		return nil, err
 	}

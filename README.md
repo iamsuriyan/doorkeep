@@ -30,10 +30,79 @@ page/snippet                              doorkeep server                     si
 The verify API is wire-compatible with Turnstile and reCAPTCHA, so migrating is a
 URL change. The client never sees its own score or reasons.
 
+## Quickstart
+
+```sh
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml run --rm doorkeep \
+  site create --name mysite --origin https://example.com
+```
+
+`site create` prints a public site key and a secret that is shown once.
+
+Proxy `/_dk/` on your site to doorkeep (same origin, no CORS, not blockable as
+a third-party host), then add the snippet and a placeholder inside your form:
+
+```html
+<script src="/_dk/v1/dk.js" data-sitekey="dk_pk_..." async defer></script>
+<form method="POST" action="/signup">
+  ...
+  <div class="doorkeep" data-action="signup"></div>
+  <button>Sign up</button>
+</form>
+```
+
+On submit your backend receives a `dk-response` field. Verify it exactly as
+you would a Turnstile token:
+
+```sh
+curl -s https://doorkeep.internal/v1/siteverify \
+  -d secret=dk_sk_... -d response="$DK_RESPONSE" -d expected_action=signup
+```
+
+```json
+{
+  "success": true,
+  "action": "signup",
+  "hostname": "example.com",
+  "score": 0.88,
+  "error-codes": [],
+  "doorkeep": { "risk": 12, "outcome": "allow", "reasons": [], "challenge": "none" }
+}
+```
+
+Already using Turnstile or reCAPTCHA? Add `data-compat="turnstile"` (or
+`recaptcha`) to the script tag and the snippet also fills
+`cf-turnstile-response` / `g-recaptcha-response`; point your verify URL at
+doorkeep.
+
 ## Status
 
-Pre-alpha. The design is in [docs/design/v1.md](docs/design/v1.md). The research
-that motivated the project is in [docs/research](docs/research).
+Pre-alpha. Milestone 1 (core scoring loop) is done:
+
+| Browser setup (measured end to end) | Risk | Outcome |
+|---|---|---|
+| Default headless Chromium (Playwright) | 100 | block |
+| Default headless Firefox (Playwright) | 100 | block |
+| Headed Chromium over CDP, webdriver flag removed | 70 | challenged |
+| Real Chromium, no automation | 0 | allow |
+
+Known gaps are tracked in the open in
+[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next:
+server-side TLS/HTTP2 fingerprints, IP intelligence and velocity (M2), visual
+and audio challenges (M3), the model layer (M4), dashboard (M5) and
+integrations (M6).
+
+The design is in [docs/design/v1.md](docs/design/v1.md). The research that
+motivated the project is in [docs/research](docs/research).
+
+## Development
+
+```sh
+make test      # Go unit and API tests, snippet unit tests
+make e2e       # real-browser detection matrix (needs xvfb)
+make build     # snippet + binary
+```
 
 ## Principles
 

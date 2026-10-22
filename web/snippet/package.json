@@ -1,0 +1,19 @@
+{
+  "name": "@doorkeep/snippet",
+  "version": "0.1.0",
+  "description": "doorkeep browser snippet: invisible signal collection for self-hosted bot scoring",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/dk.esm.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

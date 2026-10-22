@@ -1,6 +1,6 @@
 module github.com/iamsuriyan/doorkeep
 
-go 1.27.3
+go 1.26.0
 
 require (
 	github.com/expr-lang/expr v1.17.8

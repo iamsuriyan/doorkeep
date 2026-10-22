@@ -4,6 +4,7 @@
 //     and in different months, so neither doorkeep nor its operator can link
 //     a visitor across sites or over long periods;
 //   - IP hashes are scoped to one day and to a /24 (IPv4) or /48 (IPv6).
+//
 // Rotating the instance secret cuts all linkage.
 package pseudo
 

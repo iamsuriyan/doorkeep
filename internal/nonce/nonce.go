@@ -45,6 +45,7 @@ type Nonce struct {
 	Attempts  int
 	EventID   string // event created at submit
 	Risk      int    // risk recorded at submit, used when minting after a challenge
+	Floor     int    // proof floor recorded at submit; challenge credit cannot go below it
 }
 
 // Errors returned by stores. Callers map all of them to opaque client errors.

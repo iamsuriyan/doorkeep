@@ -19,9 +19,9 @@ var ErrNotFound = errors.New("store: not found")
 type Site struct {
 	ID                 string               `json:"id"`
 	Name               string               `json:"name"`
-	SiteKey            string               `json:"site_key"`    // public dk_pk_...
-	SecretHash         string               `json:"-"`           // SHA-256 hex of dk_sk_...
-	Origins            []string             `json:"origins"`     // allowed origins (scheme://host[:port])
+	SiteKey            string               `json:"site_key"` // public dk_pk_...
+	SecretHash         string               `json:"-"`        // SHA-256 hex of dk_sk_...
+	Origins            []string             `json:"origins"`  // allowed origins (scheme://host[:port])
 	Thresholds         scoring.Thresholds   `json:"thresholds"`
 	Mode               scoring.SiteMode     `json:"mode"`
 	InteractiveActions []string             `json:"interactive_actions"`
@@ -48,30 +48,30 @@ func (s *Site) ThresholdsFor(action string) scoring.Thresholds {
 
 // Event is one scored submission. Only bucketed and pseudonymous data.
 type Event struct {
-	ID            string             `json:"id"`
-	SiteID        string             `json:"site_id"`
-	TS            time.Time          `json:"ts"`
-	Action        string             `json:"action"`
-	Risk          int                `json:"risk"`
-	Outcome       scoring.Outcome    `json:"outcome"`
-	WouldBe       scoring.Outcome    `json:"would_be"`
-	Reasons       []scoring.Reason   `json:"reasons"`
-	Shadow        []scoring.Reason   `json:"shadow"`
-	ShadowRisk    int                `json:"shadow_risk"`
-	Features      scoring.Features   `json:"-"`
-	FPHash        string             `json:"fp_hash"`
-	IP24Hash      string             `json:"-"`
-	ASN           int                `json:"asn"`
-	ASNClass      string             `json:"asn_class"`
-	Country       string             `json:"country"`
-	UAFamily      string             `json:"ua_family"`
-	UAMajor       int                `json:"ua_major"`
-	OSFamily      string             `json:"os_family"`
-	ChallengeKind string             `json:"challenge_kind"`
-	ChallengeOK   *bool              `json:"challenge_ok,omitempty"`
-	VerifiedAt    *time.Time         `json:"verified_at,omitempty"`
-	Label         string             `json:"label,omitempty"` // bot | human
-	LabelSource   string             `json:"label_source,omitempty"`
+	ID            string           `json:"id"`
+	SiteID        string           `json:"site_id"`
+	TS            time.Time        `json:"ts"`
+	Action        string           `json:"action"`
+	Risk          int              `json:"risk"`
+	Outcome       scoring.Outcome  `json:"outcome"`
+	WouldBe       scoring.Outcome  `json:"would_be"`
+	Reasons       []scoring.Reason `json:"reasons"`
+	Shadow        []scoring.Reason `json:"shadow"`
+	ShadowRisk    int              `json:"shadow_risk"`
+	Features      scoring.Features `json:"-"`
+	FPHash        string           `json:"fp_hash"`
+	IP24Hash      string           `json:"-"`
+	ASN           int              `json:"asn"`
+	ASNClass      string           `json:"asn_class"`
+	Country       string           `json:"country"`
+	UAFamily      string           `json:"ua_family"`
+	UAMajor       int              `json:"ua_major"`
+	OSFamily      string           `json:"os_family"`
+	ChallengeKind string           `json:"challenge_kind"`
+	ChallengeOK   *bool            `json:"challenge_ok,omitempty"`
+	VerifiedAt    *time.Time       `json:"verified_at,omitempty"`
+	Label         string           `json:"label,omitempty"` // bot | human
+	LabelSource   string           `json:"label_source,omitempty"`
 }
 
 // ListEntry is an allow/deny/always_challenge entry for a site.

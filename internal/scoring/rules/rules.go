@@ -39,8 +39,8 @@ type Rule struct {
 	// Floor marks a rule as proof rather than evidence: when it fires, the
 	// rules risk is at least its weight, so negative "human evidence" rules
 	// (which an attacker can replay) can never cancel it.
-	Floor bool `yaml:"floor,omitempty" json:"floor,omitempty"`
-	Description   string `yaml:"description,omitempty" json:"description,omitempty"`
+	Floor       bool   `yaml:"floor,omitempty" json:"floor,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
 	when   *vm.Program
 	unless *vm.Program
@@ -120,7 +120,8 @@ type Hit struct {
 
 // Result of evaluating a set.
 type Result struct {
-	Risk       int   // clamp(sum enforced weights, 0, 100)
+	Risk       int   // max(clamp(sum enforced weights, 0, 100), Floor)
+	Floor      int   // highest weight among fired floor rules
 	ShadowRisk int   // what risk would be if shadow rules were enforced
 	Hits       []Hit // enforced + informational hits, sorted by |weight| desc
 	Shadow     []Hit // shadow hits
@@ -162,6 +163,7 @@ func (s *Set) Eval(env map[string]any) Result {
 		}
 	}
 	res.Risk = max(clamp(sum), floor)
+	res.Floor = floor
 	res.ShadowRisk = max(clamp(shadowSum), shadowFloor)
 	sortHits(res.Hits)
 	sortHits(res.Shadow)

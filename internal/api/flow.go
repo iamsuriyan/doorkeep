@@ -145,7 +145,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	res := s.Rules.Eval(rules.Context(feats.Env(), n.Action, interactive(site)))
 	listAction, listCode := s.matchLists(ctx, site.ID, ip, fpHash, r.UserAgent(), now)
 	th := site.ThresholdsFor(n.Action)
-	d := scoring.Combine(res.Risk, toReasons(res.Hits), toReasons(res.Shadow), res.ShadowRisk,
+	d := scoring.CombineWithFloor(res.Risk, res.Floor, toReasons(res.Hits), toReasons(res.Shadow), res.ShadowRisk,
 		0, 0, listAction, listCode, th, site.Mode)
 
 	ev := &store.Event{
@@ -161,7 +161,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if d.Outcome == scoring.Challenge {
 		params := pow.ForRisk(d.Risk, isMobileUA(r.UserAgent()), false)
 		n, err = s.Store.Transition(ctx, n.ID, []nonce.State{nonce.Submitted}, nonce.ChallengedPoW, now, func(x *nonce.Nonce) {
-			x.PoWSalt, x.PoWBits, x.PoWN, x.Risk = params.Salt, params.Bits, params.N, d.Risk
+			x.PoWSalt, x.PoWBits, x.PoWN, x.Risk, x.Floor = params.Salt, params.Bits, params.N, d.Risk, d.Floor
 			x.ExpiresAt = now.Add(nonce.ChallengeTTL)
 		})
 		if err != nil {
@@ -250,7 +250,7 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	th := site.ThresholdsFor(n.Action)
-	d := scoring.Decision{Risk: n.Risk, Reasons: ev.Reasons, Outcome: scoring.Challenge}
+	d := scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
 	d = scoring.ApplyChallengeCredit(d, creditPoW, th, site.Mode)
 	if err := s.Store.UpdateEventChallenge(ctx, ev.ID, "pow", true, d.Risk, d.Outcome, d.Reasons); err != nil {
 		s.Log.Error("event update", "err", err)

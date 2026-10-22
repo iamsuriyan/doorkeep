@@ -42,8 +42,8 @@ func (t Thresholds) Band(risk int) Outcome {
 type ListAction string
 
 const (
-	ListAllow          ListAction = "allow"
-	ListDeny           ListAction = "deny"
+	ListAllow           ListAction = "allow"
+	ListDeny            ListAction = "deny"
 	ListAlwaysChallenge ListAction = "always_challenge"
 )
 
@@ -55,14 +55,17 @@ type Reason struct {
 
 // Decision is the engine's output for one event.
 type Decision struct {
-	Risk          int      `json:"risk"`
-	Outcome       Outcome  `json:"outcome"`        // enforced outcome
-	WouldBe       Outcome  `json:"would_be"`       // outcome before site mode adjustments
-	Reasons       []Reason `json:"reasons"`        // enforced + informational
-	Shadow        []Reason `json:"shadow"`         // shadow contributions
-	ShadowRisk    int      `json:"shadow_risk"`    // risk if shadow items were enforced
-	ModelRisk     int      `json:"model_risk"`     // 0..100 from the model layer (0 when absent)
-	ListMatched   string   `json:"list,omitempty"` // e.g. ALLOWLIST_ASN
+	Risk        int      `json:"risk"`
+	Outcome     Outcome  `json:"outcome"`        // enforced outcome
+	WouldBe     Outcome  `json:"would_be"`       // outcome before site mode adjustments
+	Reasons     []Reason `json:"reasons"`        // enforced + informational
+	Shadow      []Reason `json:"shadow"`         // shadow contributions
+	ShadowRisk  int      `json:"shadow_risk"`    // risk if shadow items were enforced
+	ModelRisk   int      `json:"model_risk"`     // 0..100 from the model layer (0 when absent)
+	ListMatched string   `json:"list,omitempty"` // e.g. ALLOWLIST_ASN
+	// Floor is the minimum risk set by proof rules (rules with floor: true).
+	// Challenge credit never reduces risk below it.
+	Floor int `json:"floor,omitempty"`
 }
 
 // Combine applies list overrides, the model blend and site mode to a rules
@@ -74,8 +77,16 @@ func Combine(rulesRisk int, reasons, shadow []Reason, shadowRisk int,
 	modelRisk int, modelWeight float64,
 	list ListAction, listCode string,
 	th Thresholds, mode SiteMode) Decision {
+	return CombineWithFloor(rulesRisk, 0, reasons, shadow, shadowRisk, modelRisk, modelWeight, list, listCode, th, mode)
+}
 
-	d := Decision{Reasons: reasons, Shadow: shadow, ModelRisk: modelRisk}
+// CombineWithFloor is Combine with the proof floor from the rules layer.
+func CombineWithFloor(rulesRisk, floor int, reasons, shadow []Reason, shadowRisk int,
+	modelRisk int, modelWeight float64,
+	list ListAction, listCode string,
+	th Thresholds, mode SiteMode) Decision {
+
+	d := Decision{Reasons: reasons, Shadow: shadow, ModelRisk: modelRisk, Floor: floor}
 	switch list {
 	case ListAllow:
 		d.Risk, d.Outcome, d.WouldBe, d.ListMatched = 0, Allow, Allow, listCode
@@ -129,12 +140,15 @@ func Combine(rulesRisk int, reasons, shadow []Reason, shadowRisk int,
 // (design section 4.5). The final outcome never becomes better than what the
 // strongest available challenge allows.
 func ApplyChallengeCredit(d Decision, credit int, th Thresholds, mode SiteMode) Decision {
-	d.Risk = clamp(d.Risk - credit)
+	d.Risk = max(clamp(d.Risk-credit), d.Floor)
 	d.Reasons = append(d.Reasons, Reason{Code: "CHALLENGE_SOLVED", Weight: -credit})
 	d.WouldBe = th.Band(d.Risk)
-	if d.WouldBe == Challenge {
-		// A solved challenge clears the challenge band.
+	if d.WouldBe == Challenge && d.Risk > d.Floor {
+		// A solved challenge clears the challenge band, unless proof of
+		// automation holds the risk there.
 		d.WouldBe = Allow
+	} else if d.WouldBe == Challenge {
+		d.WouldBe = Block
 	}
 	d.Outcome = d.WouldBe
 	if mode == ModeMonitor {

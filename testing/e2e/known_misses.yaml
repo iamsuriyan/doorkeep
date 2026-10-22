@@ -1,0 +1,26 @@
+# Signals that do not fire against a given automation setup, tracked in the
+# open so detection drift is measured rather than hidden. The e2e suite fails
+# only when a listed detection regresses, not because these gaps exist.
+#
+# Last measured: 2026-10-22, Playwright 1.5x, Chromium 1248 build, Firefox 157.
+
+- signal: CDP_RUNTIME_LEAK
+  setup: Playwright headed and headless Chromium
+  status: does not fire
+  note: >
+    The console-serialisation probe for the DevTools Runtime domain no longer
+    triggers on current Chromium. Kept in the rule set (weight 25) for older
+    builds and self-built drivers; needs a replacement probe.
+
+- signal: per-request detection
+  setup: Playwright headed Chromium with --disable-blink-features=AutomationControlled and webdriver removed
+  status: detected by behaviour only (fill without keys, exact-centre zero-duration clicks)
+  note: >
+    A driver that types with jittered delays and moves the pointer along a
+    curve defeats these. Detection then rests on velocity and distribution
+    (M2) and the challenge path.
+
+- signal: stealth plugins (puppeteer-extra-stealth, playwright-extra, patchright, Camoufox, Nodriver)
+  setup: not yet in the matrix
+  status: unmeasured
+  note: Added to the nightly matrix in M2.

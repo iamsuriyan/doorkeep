@@ -20,7 +20,7 @@ var tzStdOffsets = map[string]int{
 	"Asia/Taipei": 480, "Asia/Manila": 480, "Asia/Kuala_Lumpur": 480, "Australia/Perth": 480,
 	"Asia/Tokyo": 540, "Asia/Seoul": 540, "Australia/Adelaide": 570, "Australia/Darwin": 570,
 	"Australia/Sydney": 600, "Australia/Melbourne": 600, "Australia/Brisbane": 600,
-	"Pacific/Auckland": 720,
+	"Pacific/Auckland":  720,
 	"America/Sao_Paulo": -180, "America/Argentina/Buenos_Aires": -180, "America/Santiago": -240,
 	"America/Halifax": -240, "America/Caracas": -240, "America/New_York": -300,
 	"America/Toronto": -300, "America/Bogota": -300, "America/Lima": -300,

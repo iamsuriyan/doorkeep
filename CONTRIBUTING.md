@@ -2,7 +2,7 @@
 
 ## Setup
 
-- Go 1.24 or newer, Node 22 or newer, pnpm 9, Docker (for e2e and Postgres tests).
+- Go 1.26 or newer, Node 22 or newer, pnpm 9, Docker (for e2e and Postgres tests).
 - `make dev` runs the server with SQLite and the static example form.
 - `make test` runs Go unit tests and snippet unit tests. `make e2e` runs the
   Playwright matrix (Chromium subset).

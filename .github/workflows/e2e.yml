@@ -1,0 +1,29 @@
+name: e2e
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @doorkeep/snippet build
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: pnpm --filter e2e exec playwright install --with-deps chromium firefox
+      - name: detection matrix
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" pnpm --filter e2e test
+        env:
+          HOME: ${{ github.workspace }}/.home

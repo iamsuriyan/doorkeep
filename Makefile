@@ -13,8 +13,8 @@ test:
 	$(GO) test -race -count=1 ./...
 	pnpm -r test
 
-e2e:
-	pnpm --filter e2e test
+e2e: snippet
+	xvfb-run -a -s "-screen 0 1920x1080x24" pnpm --filter e2e test
 
 lint:
 	$(GO) vet ./...

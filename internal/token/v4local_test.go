@@ -10,14 +10,14 @@ import (
 )
 
 type vector struct {
-	Name       string `json:"name"`
-	ExpectFail bool   `json:"expect-fail"`
-	Key        string `json:"key"`
-	Nonce      string `json:"nonce"`
-	Token      string `json:"token"`
+	Name       string  `json:"name"`
+	ExpectFail bool    `json:"expect-fail"`
+	Key        string  `json:"key"`
+	Nonce      string  `json:"nonce"`
+	Token      string  `json:"token"`
 	Payload    *string `json:"payload"`
-	Footer     string `json:"footer"`
-	Implicit   string `json:"implicit-assertion"`
+	Footer     string  `json:"footer"`
+	Implicit   string  `json:"implicit-assertion"`
 }
 
 func TestOfficialV4LocalVectors(t *testing.T) {

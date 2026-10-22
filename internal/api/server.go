@@ -30,14 +30,14 @@ var assets embed.FS
 
 // Server holds dependencies for the HTTP handlers.
 type Server struct {
-	Cfg    *config.Config
-	Store  store.Store
-	Rules  *rules.Set
-	Ring   *token.Ring
-	Keys   *pseudo.Keyer
-	Log    *slog.Logger
-	Now    func() time.Time
-	mux    *http.ServeMux
+	Cfg   *config.Config
+	Store store.Store
+	Rules *rules.Set
+	Ring  *token.Ring
+	Keys  *pseudo.Keyer
+	Log   *slog.Logger
+	Now   func() time.Time
+	mux   *http.ServeMux
 }
 
 // New wires a server.

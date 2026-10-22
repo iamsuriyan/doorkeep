@@ -235,8 +235,8 @@ func TestBorderlineGetsPoWChallenge(t *testing.T) {
 	h.clock = h.clock.Add(10 * time.Second)
 	p := humanPayloadAfter(n, 10*time.Second)
 	p.FP.GL = []string{"Mesa", "llvmpipe (LLVM 17.0.6, 256 bits)"} // software GPU: +25
-	p.Auto.CDP = true                                             // +25
-	p.Auto.Notif = true                                           // +15; -25 human evidence -> 40, challenge band
+	p.Auto.CDP = true                                              // +25
+	p.Auto.Notif = true                                            // +15; -25 human evidence -> 40, challenge band
 	code, out := h.post("/v1/submit", encode(p), browserHeaders())
 	if code != 200 || out["status"] != "challenge" || out["kind"] != "pow" {
 		t.Fatalf("expected pow challenge, got %d %v", code, out)

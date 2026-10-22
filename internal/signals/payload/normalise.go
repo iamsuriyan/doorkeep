@@ -180,10 +180,10 @@ func Normalise(p *Payload, sc ServerContext) (scoring.Features, Classified) {
 	if tp := at(p.Env.Perf, 0); !math.IsNaN(tp) {
 		f.Set("env.timer_precision", tp)
 	}
-	if dr := at(p.Env.Perf, 1); !math.IsNaN(dr) {
+	if dr := at(p.Env.Perf, 1); !math.IsNaN(dr) && dr >= 0 {
 		f.Set("env.dom_ready_bucket", scoring.BucketIndex(dr, 50, 200, 1000, 5000))
 	}
-	if rc := at(p.Env.Perf, 2); !math.IsNaN(rc) {
+	if rc := at(p.Env.Perf, 2); !math.IsNaN(rc) && rc >= 0 {
 		f.Set("env.resources_bucket", scoring.BucketIndex(rc, 1, 6, 31))
 	}
 	f.Set("env.snippet_version", float64(p.Env.SV))
@@ -213,6 +213,10 @@ func Normalise(p *Payload, sc ServerContext) (scoring.Features, Classified) {
 
 func normaliseBehaviour(f scoring.Features, b *Beh) {
 	total := 0.0
+	// When the snippet ran (focus vector present) a zero count is an
+	// observation, not missing data. Rules only combine zero counts with
+	// other evidence, so this does not make absence suspicious on its own.
+	ran := len(b.Foc) >= 4
 	if len(b.Ptr) >= 9 && b.Ptr[0] > 0 {
 		f.Set("beh.ptr_samples", b.Ptr[0])
 		f.Set("beh.ptr_path_len", b.Ptr[1])
@@ -225,6 +229,9 @@ func normaliseBehaviour(f scoring.Features, b *Beh) {
 		f.Set("beh.untrusted_frac", b.Ptr[8])
 		total += b.Ptr[0]
 	}
+	if ran && len(b.Clk) == 0 {
+		f.Set("beh.click_count", 0)
+	}
 	if len(b.Clk) >= 5 && b.Clk[0] > 0 {
 		f.Set("beh.click_count", b.Clk[0])
 		f.Set("beh.click_dur_mean", b.Clk[1])
@@ -233,8 +240,13 @@ func normaliseBehaviour(f scoring.Features, b *Beh) {
 		f.SetBool("beh.click_no_move", b.Clk[4] == 1)
 		total += b.Clk[0]
 	}
-	if len(b.Key) >= 7 && b.Key[0] > 0 {
+	if ran && len(b.Ptr) == 0 {
+		f.Set("beh.ptr_samples", 0)
+	}
+	if len(b.Key) >= 7 {
 		f.Set("beh.key_count", b.Key[0])
+	}
+	if len(b.Key) >= 7 && b.Key[0] > 0 {
 		f.Set("beh.key_hold_mean", b.Key[1])
 		f.Set("beh.key_hold_cv", b.Key[2])
 		f.Set("beh.key_interval_cv", b.Key[3])

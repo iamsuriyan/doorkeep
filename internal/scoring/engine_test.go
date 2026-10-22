@@ -60,3 +60,16 @@ func TestChallengeCredit(t *testing.T) {
 		t.Fatalf("high risk should stay blocked after pow: %+v", d)
 	}
 }
+
+func TestChallengeCannotClearProof(t *testing.T) {
+	d := CombineWithFloor(80, 80, nil, nil, 80, 0, 0, "", "", DefaultThresholds, ModeEnforce)
+	d = ApplyChallengeCredit(d, 20, DefaultThresholds, ModeEnforce)
+	if d.Outcome != Block || d.Risk < 80 {
+		t.Fatalf("proof cleared by PoW: %+v", d)
+	}
+	d = CombineWithFloor(45, 40, nil, nil, 45, 0, 0, "", "", DefaultThresholds, ModeEnforce)
+	d = ApplyChallengeCredit(d, 20, DefaultThresholds, ModeEnforce)
+	if d.Outcome != Block {
+		t.Fatalf("floor in challenge band should not be cleared: %+v", d)
+	}
+}

@@ -1,0 +1,19 @@
+# Single-node doorkeep with SQLite. Create a site with:
+#   docker compose run --rm doorkeep site create --name mysite --origin https://example.com
+services:
+  doorkeep:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/iamsuriyan/doorkeep:dev
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - doorkeep-data:/data
+    environment:
+      DOORKEEP_LOG_LEVEL: info
+      # Set when doorkeep sits behind your reverse proxy, e.g. 172.16.0.0/12
+      # DOORKEEP_TRUSTED_PROXIES: ""
+volumes:
+  doorkeep-data:
