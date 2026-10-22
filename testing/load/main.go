@@ -76,7 +76,7 @@ func payloadFor(n string) string {
 		FP: payload.FP{UA: ua, Scr: []float64{1920, 1080, 1920, 1040, 24, 1, 0}, TZ: "Asia/Kolkata", TZO: -330, Lang: []string{"en-IN", "en"},
 			GL: []string{"Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11)"}, CV: payload.Canvas{H: n[:11], S: n[11:22]}, HC: 8, Tch: 16, Feat: "_w8"},
 		Beh: payload.Beh{Ptr: []float64{120, 4000, 0.4, 0.9, 30, 50, 0.6, 0.01, 0, 3, 30, 60, 20, 5, 2}, Key: []float64{20, 90, 0.3, 0.5, 0.05, 0, 0}, Foc: []float64{1, 1, 0, 0}},
-		Env:  payload.Env{Sto: 15, Perf: []float64{0, 300, 20, 0}, SV: 1}}
+		Env: payload.Env{Sto: 15, Perf: []float64{0, 300, 20, 0}, SV: 1}}
 	b, _ := json.Marshal(p)
 	return string(b)
 }

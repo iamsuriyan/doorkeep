@@ -1,0 +1,53 @@
+# Release: binaries for Linux/macOS/Windows on amd64/arm64, a multi-arch
+# image on GHCR, checksums. Run by .github/workflows/release.yml on v* tags.
+version: 2
+project_name: doorkeep
+
+before:
+  hooks:
+    - pnpm install --frozen-lockfile
+    - pnpm --filter @doorkeep/snippet build
+    - pnpm --filter @doorkeep/dashboard build
+
+builds:
+  - id: doorkeep
+    main: ./cmd/doorkeep
+    binary: doorkeep
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md, SECURITY.md]
+
+checksum:
+  name_template: checksums.txt
+
+dockers_v2:
+  - id: image
+    ids: [doorkeep]
+    images: ["ghcr.io/iamsuriyan/doorkeep"]
+    tags: ["{{ .Version }}", "{{ if not .Prerelease }}latest{{ end }}"]
+    platforms: [linux/amd64, linux/arm64]
+    dockerfile: deploy/Dockerfile.release
+    labels:
+      org.opencontainers.image.source: https://github.com/iamsuriyan/doorkeep
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.licenses: Apache-2.0
+
+release:
+  github:
+    owner: iamsuriyan
+    name: doorkeep
+  draft: true
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc
