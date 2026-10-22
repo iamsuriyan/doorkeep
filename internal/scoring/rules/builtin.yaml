@@ -1,0 +1,349 @@
+# Built-in rules. Weights add up and are clamped to 0..100; outcomes are
+# banded by per-site thresholds (default challenge >= 35, block >= 75).
+#
+# Conventions:
+# - Unknown features are NaN, so comparisons with them are false and the rule
+#   does not fire (neutral-when-absent). Do not use `!=` on numeric features
+#   without a known() guard: NaN != x is true.
+# - Fingerprint-consistency rules carry `unless: prof.rfp == 1` (and Brave
+#   where farbling applies) because privacy browsers lie by design.
+# - Behaviour rules require an automation marker or an impossibility, never
+#   mere absence: keyboard-only and screen-reader users have no pointer data.
+# - Every rule change must update the golden tests in rules_test.go.
+
+# ---------- automation markers ----------
+- id: AUTOMATION_WEBDRIVER
+  when: "auto.wd == 1"
+  weight: 45
+  description: navigator.webdriver is true
+
+- id: AUTOMATION_WEBDRIVER_TAMPERED
+  when: "auto.wd_tamper == 1"
+  weight: 35
+  description: navigator.webdriver getter was removed or patched (stealth plugin)
+
+- id: AUTOMATION_GLOBALS
+  when: "auto.leaks >= 1"
+  weight: 50
+  description: Known automation framework globals present (cdc_, __playwright, __puppeteer, ...)
+
+- id: CDP_RUNTIME_LEAK
+  when: "auto.cdp == 1"
+  weight: 25
+  description: Chrome DevTools Protocol Runtime domain is enabled (automation or open DevTools)
+
+- id: HEADLESS_UA
+  when: "auto.headless_ua == 1"
+  weight: 60
+  description: HeadlessChrome in the user agent
+
+- id: WINDOW_GEOMETRY_ZERO
+  when: "auto.outer_zero == 1"
+  weight: 20
+  description: Window outer size is zero
+
+- id: WINDOW_OUTER_EQUALS_INNER
+  when: "auto.outer_eq_inner == 1"
+  unless: "prof.rfp == 1"
+  weight: 10
+  description: Desktop window has no browser chrome (outer == inner)
+
+- id: DEFAULT_AUTOMATION_VIEWPORT
+  when: "auto.default_viewport == 1 && auto.outer_eq_inner == 1"
+  weight: 10
+  description: 800x600 viewport at DPR 1 with no browser chrome
+
+- id: PLUGINS_NON_NATIVE
+  when: "auto.plugins_shape == 2 || auto.plugins_shape == 3"
+  weight: 20
+  description: navigator.plugins is faked or inconsistent
+
+- id: CHROME_OBJECT_FAKE
+  when: "auto.chrome_obj == 3 || (auto.chrome_obj == 2 && fp.ua_family == 'chrome')"
+  unless: "prof.brave == 1"
+  weight: 20
+  description: window.chrome missing or faked on a Chrome UA
+
+- id: NOTIFICATION_PERMISSION_CONTRADICTION
+  when: "auto.notif_contradiction == 1"
+  weight: 15
+  description: Notification.permission contradicts the Permissions API
+
+- id: EMULATED_NETWORK
+  when: "auto.conn_rtt_zero == 1"
+  weight: 8
+  description: navigator.connection reports rtt 0
+
+- id: NON_NATIVE_CORE_APIS
+  when: "auto.non_native_apis >= 2"
+  weight: 15
+  description: Several core browser APIs are not native code (interception or jsdom)
+
+# ---------- fingerprint consistency ----------
+- id: UA_ENGINE_MISMATCH
+  when: "(fp.ua_family in ['firefox'] && auto.eng in ['v8','jsc']) || (fp.ua_family in ['chrome','edge','opera','samsung'] && auto.eng in ['spidermonkey','jsc'] && fp.os_family != 'ios') || (fp.ua_family == 'safari' && auto.eng in ['v8','spidermonkey'])"
+  unless: "prof.rfp == 1"
+  weight: 60
+  description: JavaScript engine contradicts the claimed browser
+
+- id: UA_FEATURE_MISMATCH
+  when: "fp.feat_mismatch >= 2"
+  unless: "prof.rfp == 1"
+  weight: 30
+  description: Available JavaScript features do not match the claimed browser version
+
+- id: UA_CLIENT_HINTS_MISMATCH
+  when: "fp.uad_mismatch == 1"
+  weight: 25
+  description: navigator.userAgentData contradicts the user agent string
+
+- id: MOBILE_WITHOUT_TOUCH
+  when: "fp.mobile_no_touch == 1"
+  weight: 25
+  description: Mobile user agent with no touch support and a desktop-size screen
+
+- id: DEVICE_EMULATION
+  when: "fp.desktop_coarse_pointer == 1"
+  weight: 15
+  description: Desktop Chrome with coarse pointer and zero touch points (device emulation)
+
+- id: SOFTWARE_GPU
+  when: "fp.gpu_class == 'software'"
+  unless: "prof.rfp == 1"
+  weight: 25
+  description: WebGL uses a software renderer (no GPU, typical for headless servers)
+
+- id: GPU_OS_MISMATCH
+  when: "fp.gpu_os_mismatch == 1"
+  unless: "prof.rfp == 1 || prof.brave == 1"
+  weight: 30
+  description: GPU vendor is impossible for the claimed operating system
+
+- id: FONT_OS_MISMATCH
+  when: "fp.font_os_mismatch == 1"
+  unless: "prof.rfp == 1"
+  weight: 25
+  description: Installed fonts belong to a different operating system than claimed
+
+- id: TIMEZONE_OFFSET_MISMATCH
+  when: "fp.tz_offset_mismatch == 1"
+  unless: "prof.rfp == 1"
+  weight: 20
+  description: Timezone name and UTC offset disagree (one was spoofed)
+
+- id: WINDOWS_NO_TASKBAR
+  when: "fp.avail_eq_screen == 1 && auto.outer_eq_inner == 1"
+  unless: "prof.rfp == 1"
+  weight: 8
+  description: Claimed Windows desktop with no taskbar and no browser chrome
+
+# ---------- behaviour (impossibilities only) ----------
+- id: SYNTHETIC_EVENTS
+  when: "beh.untrusted_frac >= 0.5"
+  weight: 40
+  description: Most input events were dispatched by script (isTrusted false)
+
+- id: ROBOTIC_POINTER_PATH
+  when: "beh.ptr_samples >= 10 && beh.ptr_collinear_frac >= 0.95 && beh.ptr_interval_cv < 0.05"
+  weight: 30
+  description: Pointer moved in a perfectly straight line at perfectly even intervals
+
+- id: CLICK_WITHOUT_MOVEMENT
+  when: "beh.click_no_move == 1 && fp.pointer_class == 1 && beh.key_count < 1"
+  weight: 15
+  description: Mouse click on a fine-pointer device with no prior pointer movement and no keyboard use
+
+- id: ZERO_PRESS_DURATION
+  when: "beh.click_count >= 1 && beh.click_dur_mean < 1"
+  weight: 20
+  description: Clicks with zero press duration
+
+- id: ROBOTIC_TYPING
+  when: "beh.key_count >= 8 && beh.key_hold_mean < 1 && beh.key_interval_cv < 0.02"
+  weight: 30
+  description: Typing with zero key hold time and perfectly even rhythm
+
+- id: FIELDS_FILLED_WITHOUT_KEYS
+  when: "beh.input_no_key_frac >= 0.9 && beh.ptr_samples < 1 && beh.key_count < 1 && auto.wd == 1"
+  weight: 15
+  description: Every field filled programmatically with no input at all, in an automated browser
+
+- id: NO_INTERACTION_FAST_SUBMIT
+  when: "beh.total_events == 0 && t.elapsed_s < 1.5 && action in site.interactive_actions"
+  weight: 20
+  description: Interactive form submitted in under 1.5 s with no input events
+
+- id: NEVER_FOCUSED_HIDDEN_SUBMIT
+  when: "beh.focus_start == 0 && beh.focus_submit == 0 && beh.hidden_at_submit == 1 && beh.visibility_changes == 0"
+  weight: 15
+  description: Page was never focused and submitted while hidden
+
+- id: SYNTHETIC_FRAME_CLOCK
+  when: "beh.raf_median > 0 && beh.raf_cv < 0.001"
+  unless: "prof.rfp == 1"
+  weight: 10
+  description: Animation frames arrive with no jitter at all (synthetic clock)
+
+- id: HUMAN_POINTER_EVIDENCE
+  when: "beh.ptr_samples > 30 && beh.ptr_straightness < 0.9 && beh.ptr_interval_cv > 0.2 && beh.untrusted_frac < 0.05"
+  weight: -15
+  description: Natural, trusted pointer movement observed
+
+- id: HUMAN_TYPING_EVIDENCE
+  when: "beh.key_count >= 8 && beh.key_hold_cv > 0.15 && beh.key_interval_cv > 0.2 && beh.untrusted_frac < 0.05"
+  weight: -10
+  description: Natural, trusted keyboard rhythm observed
+
+# ---------- timing truth ----------
+- id: CLIENT_CLOCK_FORGED
+  when: "t.elapsed_mismatch == 1"
+  weight: 35
+  description: Client-reported elapsed time exceeds what the server observed
+
+- id: COLLECTION_TOO_FAST
+  when: "t.collect_too_fast == 1"
+  weight: 25
+  description: Expensive signals reported complete faster than possible
+
+- id: CLOCK_SKEW_LARGE
+  when: "t.clock_skew_s > 300 || t.clock_skew_s < -300"
+  weight: 5
+  description: Client clock is more than 5 minutes off
+
+# ---------- network and headers (filled by server-side signal packages) ----------
+- id: REPLAY_CANVAS_SEED
+  when: "net.canvas_seed_conflict == 1"
+  weight: 90
+  description: A fingerprint captured with one nonce was replayed with another
+
+- id: ORIGIN_CHANGED
+  when: "net.origin_mismatch == 1"
+  weight: 60
+  description: Submit came from a different origin than the session
+
+- id: UA_CHANGED
+  when: "net.ua_changed == 1"
+  weight: 50
+  description: User-Agent changed between session and submit
+
+- id: IP_CHANGED
+  when: "net.ip24_changed == 1"
+  weight: 15
+  description: Network changed between session and submit
+
+- id: UA_HEADER_JS_MISMATCH
+  when: "net.ua_hdr_js_mismatch == 1"
+  weight: 40
+  description: User-Agent header differs from navigator.userAgent
+
+- id: UA_CH_MISSING
+  when: "net.ch_missing == 1"
+  unless: "prof.brave == 1"
+  weight: 20
+  description: Chromium browser did not send client hints
+
+- id: UA_CH_UNEXPECTED
+  when: "net.ch_unexpected == 1"
+  weight: 25
+  description: Non-Chromium browser sent Chromium client hints
+
+- id: UA_CH_MISMATCH
+  when: "net.ch_mismatch == 1"
+  weight: 30
+  description: Client hints contradict the user agent
+
+- id: FETCH_METADATA_MISSING
+  when: "net.fetch_metadata_missing == 1"
+  weight: 25
+  description: Modern browser user agent without Sec-Fetch headers
+
+- id: ACCEPT_LANGUAGE_MISSING
+  when: "net.accept_lang_missing == 1"
+  weight: 15
+  description: No Accept-Language header
+
+- id: ACCEPT_LANGUAGE_MISMATCH
+  when: "net.accept_lang_mismatch == 1"
+  unless: "prof.rfp == 1"
+  weight: 10
+  description: Accept-Language does not match navigator.languages
+
+- id: UA_TLS_MISMATCH
+  when: "net.tls_ua_mismatch == 1"
+  weight: 45
+  description: TLS handshake belongs to a different client than the user agent claims
+
+- id: UA_H2_MISMATCH
+  when: "net.h2_ua_mismatch == 1"
+  weight: 35
+  description: HTTP/2 settings belong to a different client than the user agent claims
+
+- id: UA_HTTP1_ON_H2
+  when: "net.http1_on_h2 == 1"
+  weight: 20
+  description: Modern browser used HTTP/1.1 although HTTP/2 was offered
+
+- id: IP_DATACENTER
+  when: "net.asn_class == 'hosting'"
+  weight: 20
+  description: Request from a hosting or cloud provider network
+
+- id: IP_TOR
+  when: "net.ip_tor == 1"
+  weight: 10
+  description: Request from a Tor exit node (informational weight; use lists to challenge)
+
+- id: IP_DROP_LIST
+  when: "net.ip_drop == 1"
+  weight: 70
+  description: Request from a network on the Spamhaus DROP list
+
+- id: TIMEZONE_IP_COUNTRY_MISMATCH
+  when: "net.tz_ip_country_match == 0"
+  unless: "prof.rfp == 1"
+  weight: 5
+  description: Timezone country differs from IP country (weak; travel and VPNs)
+
+# ---------- velocity ----------
+- id: FP_MULTI_ASN
+  when: "vel.fp_distinct_asn_1h >= 5"
+  weight: 50
+  description: One device fingerprint seen from many networks in an hour (proxy rotation)
+
+- id: FP_MULTI_NETWORK
+  when: "vel.fp_distinct_ip24_10m >= 4"
+  weight: 30
+  description: One device fingerprint seen from several networks in ten minutes
+
+- id: CANVAS_MANY_BROWSERS
+  when: "vel.canvas_distinct_ua_1h >= 4"
+  weight: 40
+  description: Identical canvas rendering claimed by many different browsers
+
+- id: IP_BURST
+  when: "vel.ip_submits_1m >= 20"
+  weight: 30
+  description: Burst of submissions from one IP
+
+- id: SUBNET_DEVICE_FARM
+  when: "vel.ip24_distinct_fp_10m >= 50"
+  weight: 25
+  description: Very many distinct devices from one subnet
+
+- id: SCHEDULED_CADENCE
+  when: "vel.fp_interval_cv < 0.05 && vel.fp_submits_1h >= 10"
+  weight: 30
+  description: Submissions at machine-regular intervals
+
+# ---------- informational profiles (weight 0) ----------
+- id: PROFILE_RFP
+  when: "prof.rfp == 1"
+  weight: 0
+  informational: true
+  description: Privacy-hardened browser (Firefox resistFingerprinting or Tor); consistency rules relaxed
+
+- id: PROFILE_BRAVE
+  when: "prof.brave == 1"
+  weight: 0
+  informational: true
+  description: Brave fingerprint protection; consistency rules relaxed

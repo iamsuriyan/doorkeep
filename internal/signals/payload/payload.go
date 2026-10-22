@@ -51,14 +51,14 @@ type Payload struct {
 	Env  Env     `json:"env"`
 }
 
-// Timing carries client clocks. All performance.now() values are ms since
-// timeOrigin; D is Date.now() - timeOrigin at submit so the server can compute
-// skew against the `now` it returned at session issue.
+// Timing carries client clocks. I, F and S are performance.now() values (ms
+// since timeOrigin); D is the client's Date.now() at submit (unix ms) so the
+// server can compute wall-clock skew.
 type Timing struct {
 	I float64 `json:"i"` // init
 	F float64 `json:"f"` // first trusted interaction (0 = none)
 	S float64 `json:"s"` // submit
-	D float64 `json:"d"` // Date.now() - performance.timeOrigin
+	D float64 `json:"d"` // Date.now() at submit, unix ms
 }
 
 // Profile holds privacy-browser hints. Informational only.
@@ -205,7 +205,7 @@ func (p *Payload) Validate() error {
 		p.A = "default"
 	}
 	for _, v := range []float64{p.T.I, p.T.F, p.T.S, p.T.D} {
-		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1e12 {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1e14 {
 			return fmt.Errorf("%w: timing out of range", ErrInvalid)
 		}
 	}
