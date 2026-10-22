@@ -6,6 +6,7 @@ package velocity
 
 import (
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,14 +23,31 @@ const (
 	maxKeys  = 200_000                 // memory guard; oldest keys evicted first
 )
 
-// series is a ring of per-bucket counts plus, optionally, per-bucket sets of
-// distinct members (for "distinct ASNs per fingerprint").
+// entry is one 10-second bucket that actually had events. Keys usually see
+// only a few events, so buckets are stored sparsely (ascending) instead of
+// a fixed hour-long ring per key.
+type entry struct {
+	idx     int64
+	n       uint32
+	members map[string]struct{}
+}
+
 type series struct {
-	counts  [nBuckets]uint32
-	members [nBuckets]map[string]struct{}
-	epoch   [nBuckets]int64 // bucket index each slot currently holds
+	buckets []entry
 	last    int64
 	times   []int64 // recent event times (ms) for cadence, capped
+}
+
+// prune drops buckets older than the longest window.
+func (s *series) prune(now int64) {
+	cut := now - int64(nBuckets)
+	i := 0
+	for i < len(s.buckets) && s.buckets[i].idx <= cut {
+		i++
+	}
+	if i > 0 {
+		s.buckets = append(s.buckets[:0], s.buckets[i:]...)
+	}
 }
 
 // Tracker is safe for concurrent use.
@@ -61,7 +79,7 @@ func (t *Tracker) get(key string) *series {
 
 // evict drops keys idle for more than an hour, then arbitrary keys if still full.
 func (t *Tracker) evict() {
-	cutoff := t.now().Add(-time.Hour).UnixNano() / int64(bucket)
+	cutoff := t.now().UnixNano()/int64(bucket) - int64(nBuckets)
 	for k, s := range t.m {
 		if s.last < cutoff {
 			delete(t.m, k)
@@ -75,36 +93,47 @@ func (t *Tracker) evict() {
 	}
 }
 
+// Sweep removes idle keys; call periodically to bound memory.
+func (t *Tracker) Sweep() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cutoff := t.now().UnixNano()/int64(bucket) - int64(nBuckets)
+	for k, s := range t.m {
+		if s.last < cutoff {
+			delete(t.m, k)
+		}
+	}
+}
+
 // Add records one event for key, optionally with a member value whose
 // distinct count is tracked (e.g. key=fp:<hash>, member=asn:<n>).
 func (t *Tracker) Add(key string, members ...string) {
 	now := t.now()
 	idx := now.UnixNano() / int64(bucket)
-	slot := int(idx % int64(nBuckets))
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	s := t.get(key)
-	if s.epoch[slot] != idx {
-		s.epoch[slot] = idx
-		s.counts[slot] = 0
-		s.members[slot] = nil
+	s.prune(idx)
+	if n := len(s.buckets); n == 0 || s.buckets[n-1].idx != idx {
+		s.buckets = append(s.buckets, entry{idx: idx})
 	}
-	s.counts[slot]++
+	e := &s.buckets[len(s.buckets)-1]
+	e.n++
 	for _, m := range members {
 		if m == "" {
 			continue
 		}
-		if s.members[slot] == nil {
-			s.members[slot] = map[string]struct{}{}
+		if e.members == nil {
+			e.members = map[string]struct{}{}
 		}
-		if len(s.members[slot]) < 1024 {
-			s.members[slot][m] = struct{}{}
+		if len(e.members) < 1024 {
+			e.members[m] = struct{}{}
 		}
 	}
 	s.last = idx
 	s.times = append(s.times, now.UnixMilli())
 	if len(s.times) > 32 {
-		s.times = s.times[len(s.times)-32:]
+		s.times = append(s.times[:0], s.times[len(s.times)-32:]...)
 	}
 }
 
@@ -122,8 +151,7 @@ func (t *Tracker) Distinct(key string, d time.Duration, prefix string) int {
 }
 
 func (t *Tracker) stats(key string, d time.Duration, prefix string) (int, int) {
-	now := t.now()
-	idx := now.UnixNano() / int64(bucket)
+	idx := t.now().UnixNano() / int64(bucket)
 	span := int64(d / bucket)
 	if span < 1 {
 		span = 1
@@ -139,16 +167,18 @@ func (t *Tracker) stats(key string, d time.Duration, prefix string) (int, int) {
 	if prefix != "" {
 		set = map[string]struct{}{}
 	}
-	for i := int64(0); i < span && i < int64(nBuckets); i++ {
-		b := idx - i
-		slot := int(((b % int64(nBuckets)) + int64(nBuckets)) % int64(nBuckets))
-		if s.epoch[slot] != b {
+	for i := len(s.buckets) - 1; i >= 0; i-- {
+		b := s.buckets[i]
+		if b.idx <= idx-span || b.idx > idx {
+			if b.idx <= idx-span {
+				break
+			}
 			continue
 		}
-		total += int(s.counts[slot])
+		total += int(b.n)
 		if set != nil {
-			for m := range s.members[slot] {
-				if len(m) >= len(prefix) && m[:len(prefix)] == prefix {
+			for m := range b.members {
+				if strings.HasPrefix(m, prefix) {
 					set[m] = struct{}{}
 				}
 			}

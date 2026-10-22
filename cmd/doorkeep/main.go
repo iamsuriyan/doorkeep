@@ -416,6 +416,9 @@ func rollup(ctx context.Context, srv *api.Server, log *slog.Logger) {
 		if err := srv.Rollup(ctx, 3); err != nil && ctx.Err() == nil {
 			log.Error("rollup", "err", err)
 		}
+		if t, ok := srv.Vel.(*velocity.Tracker); ok {
+			t.Sweep()
+		}
 		select {
 		case <-ctx.Done():
 			return
