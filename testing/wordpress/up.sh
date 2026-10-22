@@ -33,7 +33,8 @@ if [ "${DK_WC:-}" = "1" ]; then
   $WP wp option update woocommerce_cod_settings --format=json '{"enabled":"yes","title":"Cash on delivery","description":"","instructions":"","enable_for_methods":[],"enable_for_virtual":"yes"}' >/dev/null
   PRODUCT=$($WP wp wc product create --name=Door --type=simple --regular_price=10 --virtual=true --user=admin --porcelain)
   CHECKOUT=$($WP wp option get woocommerce_checkout_page_id)
+  ACCOUNT=$($WP wp option get woocommerce_myaccount_page_id)
   $WP wp option update woocommerce_coming_soon no >/dev/null   # new stores start hidden
   $WP wp option patch update doorkeep_settings woocommerce 1 >/dev/null
-  echo "$PRODUCT $CHECKOUT" > "$HERE/.wc"
+  echo "$PRODUCT $CHECKOUT $ACCOUNT" > "$HERE/.wc"
 fi

@@ -28,5 +28,9 @@ Limitations in this version:
   equivalent. Sticky routing is not needed.
 - TLS and HTTP/2 fingerprints need each node to terminate TLS behind a TCP
   load balancer, or your proxy to forward `Doorkeep-TLS` / `Doorkeep-H2`.
-- If Redis is unreachable, velocity reads as zero (fail open) and a warning
-  is logged once a minute; scoring otherwise continues.
+- If Redis is unreachable, each node falls back to its own in-memory counts
+  (session rate limits and velocity keep working, per node rather than
+  cluster-wide) and logs a warning once a minute.
+- Each node binds its own admin listener (`admin_listen`, default
+  `127.0.0.1:8081`). Several nodes on one host need different addresses,
+  e.g. `DOORKEEP_ADMIN_LISTEN=127.0.0.1:8082` for the second.

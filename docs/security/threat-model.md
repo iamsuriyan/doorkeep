@@ -31,6 +31,26 @@ This page states what it handles, what it cannot, and what has been measured.
   library at the TLS layer, which is why TLS and HTTP/2 mismatches are
   evidence (challenge), not proof (block).
 
+## Known false-positive sources
+
+Real people who look partly unusual. None of these alone reaches the
+challenge threshold (35), but they add up, which is why new sites should
+start in monitor mode.
+
+- **Relays and VPNs.** iCloud Private Relay, VPNs and corporate egress leave
+  from hosting networks: `IP_DATACENTER` (+20).
+- **Virtual machines and remote desktops.** No GPU, so a software
+  renderer: `SOFTWARE_GPU` (+25).
+- **TLS-inspecting corporate proxies.** The proxy's handshake replaces the
+  browser's: `UA_TLS_MISMATCH` (+45) and `UA_H2_MISMATCH` (+35) when doorkeep
+  sees the TLS; see [tls-termination.md](../operations/tls-termination.md).
+- **Travellers.** Time zone and IP country differ: +5.
+
+Handled explicitly, with tests: privacy browsers (Tor, Firefox RFP, Brave),
+keyboard-only and screen-reader users, every browser on iOS (all WebKit, no
+Client Hints), and Android in-app browsers (WebView: no `window.chrome`, no
+guaranteed Client Hints).
+
 ## Non-goals
 
 Volumetric DDoS, WAF functions, credential-stuffing lists, client-side code

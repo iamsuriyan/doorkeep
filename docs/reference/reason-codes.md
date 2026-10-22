@@ -10,7 +10,7 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `AUTOMATION_WEBDRIVER` | +80 | yes | navigator.webdriver is true (the browser declares it is automated) | `auto.wd == 1` |  |
 | `IP_DROP_LIST` | +70 | yes | Request from a network on the Spamhaus DROP list | `net.ip_drop == 1` |  |
 | `HEADLESS_UA` | +60 | yes | HeadlessChrome in the user agent | `auto.headless_ua == 1` |  |
-| `UA_ENGINE_MISMATCH` | +60 |  | JavaScript engine contradicts the claimed browser | `(fp.ua_family in ['firefox'] && auto.eng in ['v8','jsc']) \|\| (fp.ua_family in ['chrome','edge','opera','samsung'] && auto.eng in ['spidermonkey','jsc'] && fp.os_family != 'ios') \|\| (fp.ua_family == 'safari' && auto.eng in ['v8','spidermonkey'])` | `prof.rfp == 1` |
+| `UA_ENGINE_MISMATCH` | +60 |  | JavaScript engine contradicts the claimed browser | `(fp.ua_family in ['firefox'] && auto.eng in ['v8','jsc'] && fp.os_family != 'ios') \|\| (fp.ua_family in ['chrome','edge','opera','samsung'] && auto.eng in ['spidermonkey','jsc'] && fp.os_family != 'ios') \|\| (fp.ua_family == 'safari' && auto.eng in ['v8','spidermonkey'])` | `prof.rfp == 1` |
 | `ORIGIN_CHANGED` | +60 |  | Submit came from a different origin than the session | `net.origin_mismatch == 1` |  |
 | `AUTOMATION_GLOBALS` | +50 | yes | Known automation framework globals present (cdc_, __playwright, __puppeteer, ...) | `auto.leaks >= 1` |  |
 | `UA_CHANGED` | +50 |  | User-Agent changed between session and submit | `net.ua_changed == 1` |  |

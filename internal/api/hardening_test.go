@@ -301,3 +301,60 @@ func TestInterstitialRawReturnFromNginx(t *testing.T) {
 		}
 	}
 }
+
+// Running out of challenge attempts records a block that keeps the reasons
+// which led to the challenge (they used to be wiped).
+func TestChallengeExhaustionKeepsReasons(t *testing.T) {
+	h := newHarness(t)
+	n, out := h.highBand()
+	h.solvePoW(n, out)
+	for range 3 {
+		h.answer(n, "zzzzz")
+	}
+	nn, _ := h.srv.Store.Get(t.Context(), n)
+	ev, err := h.srv.Store.GetEvent(t.Context(), nn.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]bool{}
+	for _, r := range ev.Reasons {
+		codes[r.Code] = true
+	}
+	if ev.Outcome != scoring.Block || !codes["CHALLENGE_FAILED"] || !codes["CHALLENGE_SOLVED"] || len(ev.Reasons) < 4 {
+		t.Fatalf("visual exhaustion event: outcome %s reasons %v", ev.Outcome, ev.Reasons)
+	}
+
+	// Proof of work: three wrong solutions.
+	n, _ = h.highBand()
+	for range 3 {
+		body, _ := json.Marshal(map[string]any{"n": n, "kind": "pow", "sol": []uint32{1}})
+		h.post("/v1/challenge", string(body), browserHeaders())
+	}
+	nn, _ = h.srv.Store.Get(t.Context(), n)
+	ev, _ = h.srv.Store.GetEvent(t.Context(), nn.EventID)
+	if nn.State != "burned" || ev.Outcome != scoring.Block || ev.ChallengeKind != "pow" || len(ev.Reasons) < 2 {
+		t.Fatalf("pow exhaustion: state %s outcome %s kind %q reasons %v", nn.State, ev.Outcome, ev.ChallengeKind, ev.Reasons)
+	}
+}
+
+// One override that no longer compiles must not discard the site's others.
+func TestInvalidOverrideDoesNotDropOthers(t *testing.T) {
+	h := newHarness(t)
+	put := func(id, spec string) {
+		if err := h.srv.Store.PutSiteRule(t.Context(), store.SiteRule{SiteID: "site1", RuleID: id, Spec: []byte(spec), UpdatedAt: h.clock}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("SOFTWARE_GPU", `{"mode":"off"}`) // valid: switched off for false positives
+	put("PROFILE_RFP", `{"weight":30}`)   // invalid now: informational rules carry no weight
+	put("RULE_THAT_WAS_REMOVED", `{"mode":"off"}`)
+	set := h.srv.siteRules(t.Context(), "site1")
+	for _, r := range set.Rules() {
+		if r.ID == "SOFTWARE_GPU" && r.Mode != "off" {
+			t.Fatal("valid override dropped because another one was invalid")
+		}
+		if r.ID == "PROFILE_RFP" && r.Weight != 0 {
+			t.Fatal("invalid override applied")
+		}
+	}
+}

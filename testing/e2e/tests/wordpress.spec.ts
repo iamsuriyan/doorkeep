@@ -12,6 +12,10 @@ async function humanType(page: Page, sel: string, text: string) {
   for (let i = 1; i <= 18; i++) { await page.mouse.move(box.x + box.width * (0.3 + 0.2 * Math.sin(i / 3)), box.y + box.height / 2 + rnd(-3, 3)); await page.waitForTimeout(rnd(8, 25)); }
   await page.mouse.down(); await page.waitForTimeout(rnd(70, 130)); await page.mouse.up();
   for (const ch of text) { await page.keyboard.down(ch); await page.waitForTimeout(rnd(40, 100)); await page.keyboard.up(ch); await page.waitForTimeout(rnd(50, 160)); }
+  // wp-login.php focuses and selects the username field on a timer, which
+  // can race synthetic typing; the keystrokes above are what doorkeep
+  // measures, the field value only has to be right for WordPress.
+  if ((await page.inputValue(sel)) !== text) await page.fill(sel, text);
 }
 
 async function humanClick(page: Page, sel: string) {
@@ -54,7 +58,7 @@ test("comments: a person can comment, headless Chromium cannot", async () => {
   const page = await b.newPage();
   await page.goto(`${WP}/?p=1`);
   await page.waitForFunction(() => (window as any).doorkeep !== undefined);
-  await humanType(page, "#comment", "Lovely post, thanks");
+  await humanType(page, "#comment", `Lovely post, thanks ${Date.now() % 100000}`); // unique: WordPress rejects duplicates
   await humanType(page, "#author", "Asha");
   await humanType(page, "#email", "asha@example.com");
   await humanClick(page, "#submit");
@@ -108,5 +112,32 @@ test("WooCommerce block checkout: a person orders, headless Chromium is refused"
   await expect(bad.page.locator(".wc-block-components-notice-banner.is-error")).toContainText("could not verify", { timeout: 30_000 });
   expect(bad.header()).toBe(true);
   console.log("woocommerce-block-checkout: person ordered, headless refused");
+  await h.close();
+});
+
+// The WooCommerce My Account login calls wp_signon(), so the login check
+// applies there too; the plugin must place the widget on that form.
+test("WooCommerce My Account: a person logs in, headless Chromium is refused", async () => {
+  test.skip(!process.env.DK_WC_READY, "set DK_WP=1 DK_WC=1 to run the WooCommerce test");
+  const account = process.env.DK_WC_READY!.split(" ")[2];
+  const b = await chromium.launch(headed);
+  const page = await b.newPage();
+  await page.goto(`${WP}/?page_id=${account}`);
+  await page.waitForFunction(() => (window as any).doorkeep !== undefined);
+  await humanType(page, "#username", "admin");
+  await humanType(page, "#password", "correct horse battery staple");
+  await humanClick(page, "button[name=login]");
+  await expect(page.locator(".woocommerce-MyAccount-navigation")).toBeVisible({ timeout: 30_000 });
+  await b.close();
+
+  const h = await chromium.launch({ headless: true });
+  const p2 = await h.newPage();
+  await p2.goto(`${WP}/?page_id=${account}`);
+  await p2.waitForFunction(() => (window as any).doorkeep !== undefined);
+  await p2.fill("#username", "admin");
+  await p2.fill("#password", "correct horse battery staple");
+  await p2.click("button[name=login]");
+  await expect(p2.locator(".woocommerce-error, .wc-block-components-notice-banner.is-error")).toContainText("could not verify", { timeout: 30_000 });
+  console.log("woocommerce-account-login: person signed in, headless refused");
   await h.close();
 });

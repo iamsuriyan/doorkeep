@@ -15,7 +15,11 @@ x-doorkeep: &doorkeep
     DOORKEEP_TOKEN_KEY: ${DOORKEEP_TOKEN_KEY}
     DOORKEEP_TRUSTED_PROXIES: 172.16.0.0/12,10.0.0.0/8
 services:
-  doorkeep-1: *doorkeep
+  doorkeep-1:
+    <<: *doorkeep
+    # Dashboard and admin API, localhost only. Any node can serve it; they
+    # share the database.
+    ports: ["127.0.0.1:8081:8081"]
   doorkeep-2: *doorkeep
   postgres:
     image: postgres:17-alpine

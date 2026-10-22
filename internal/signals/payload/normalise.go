@@ -52,7 +52,13 @@ func Normalise(p *Payload, sc ServerContext) (scoring.Features, Classified) {
 		f.Set("auto.plugins_shape", float64(p.Auto.Plg[1]))
 	}
 	f.Set("auto.lang_count", float64(len(p.FP.Lang)))
-	f.Set("auto.chrome_obj", float64(p.Auto.Chr))
+	// Android WebView (in-app browsers) is Chrome without window.chrome:
+	// "missing" is normal there; a fake object (3) still counts.
+	chr := p.Auto.Chr
+	if chr == 2 && IsAndroidWebView(p.FP.UA) {
+		chr = 0
+	}
+	f.Set("auto.chrome_obj", float64(chr))
 	f.SetBool("auto.notif_contradiction", p.Auto.Notif)
 	if p.Auto.Conn != 0 {
 		f.SetBool("auto.conn_rtt_zero", p.Auto.Conn == 2)
@@ -77,7 +83,13 @@ func Normalise(p *Payload, sc ServerContext) (scoring.Features, Classified) {
 	}
 	f.SetCat("fp.os_family", c.OSFamily)
 	f.SetBool("fp.ua_mobile", c.Mobile)
-	f.Set("fp.feat_mismatch", float64(featMismatch(c.UAFamily, c.UAMajor, p.FP.Feat)))
+	// On iOS every browser is WebKit, so feature support follows the iOS
+	// version (= its Safari), not the browser's own version number.
+	featFamily, featMajor := c.UAFamily, c.UAMajor
+	if c.OSFamily == "ios" {
+		featFamily, featMajor = "safari", IOSMajor(p.FP.UA)
+	}
+	f.Set("fp.feat_mismatch", float64(featMismatch(featFamily, featMajor, p.FP.Feat)))
 	if p.FP.UAD != nil {
 		f.SetBool("fp.uad_mismatch", uadMismatch(p.FP.UAD, c))
 	}
@@ -374,6 +386,28 @@ func uaFamily(ua string) (string, int) {
 
 // OSFamily is exported for signals/net.
 func OSFamily(ua string) string { return osFamily(ua) }
+
+// IsAndroidWebView reports the Android WebView marker ("; wv)") that
+// in-app browsers (Instagram, Facebook, Gmail) carry in their user agent.
+func IsAndroidWebView(ua string) bool {
+	return strings.Contains(ua, "Android") && strings.Contains(ua, "; wv)")
+}
+
+// IOSMajor returns the iOS major version from an iPhone/iPad/iPod user
+// agent ("CPU iPhone OS 18_0 like Mac OS X"), or 0.
+func IOSMajor(ua string) int {
+	i := strings.Index(ua, " OS ")
+	if i < 0 || osFamily(ua) != "ios" {
+		return 0
+	}
+	rest := ua[i+4:]
+	end := strings.IndexAny(rest, "_. ")
+	if end < 0 {
+		return 0
+	}
+	n, _ := strconv.Atoi(rest[:end])
+	return n
+}
 
 func osFamily(ua string) string {
 	switch {

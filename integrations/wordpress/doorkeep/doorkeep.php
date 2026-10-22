@@ -35,6 +35,9 @@ final class Doorkeep_Plugin
         }
         if ($o['login']) {
             add_action('login_form', [self::class, 'placeholder_login']);
+            // wp_login_form() in themes and the WooCommerce My Account form.
+            add_filter('login_form_middle', [self::class, 'placeholder_login_form_middle']);
+            add_action('woocommerce_login_form', [self::class, 'placeholder_login_front']);
             add_filter('authenticate', [self::class, 'check_login'], 30, 3);
         }
         if ($o['register']) {
@@ -43,6 +46,7 @@ final class Doorkeep_Plugin
         }
         if ($o['lostpassword']) {
             add_action('lostpassword_form', [self::class, 'placeholder_lostpassword']);
+            add_action('woocommerce_lostpassword_form', [self::class, 'placeholder_lostpassword_front']);
             add_action('lostpassword_post', [self::class, 'check_lostpassword'], 10, 1);
         }
         if ($o['comments']) {
@@ -206,11 +210,20 @@ final class Doorkeep_Plugin
         return str_replace(' src=', $attrs . ' src=', $tag);
     }
 
+    private static function placeholder_html(string $action): string
+    {
+        return '<div class="doorkeep" data-action="' . esc_attr($action) . '"></div>';
+    }
     private static function placeholder(string $action): void
     {
-        echo '<div class="doorkeep" data-action="' . esc_attr($action) . '"></div>';
+        echo self::placeholder_html($action);
     }
     public static function placeholder_login(): void { self::placeholder('login'); }
+    // Front-end forms render after wp_head: a late enqueue prints the
+    // snippet in the footer.
+    public static function placeholder_login_front(): void { self::enqueue(); self::placeholder('login'); }
+    public static function placeholder_login_form_middle($html): string { self::enqueue(); return (string)$html . self::placeholder_html('login'); }
+    public static function placeholder_lostpassword_front(): void { self::enqueue(); self::placeholder('lostpassword'); }
     public static function placeholder_register(): void { self::placeholder('register'); }
     public static function placeholder_lostpassword(): void { self::placeholder('lostpassword'); }
     public static function placeholder_comment(): void { self::placeholder('comment'); }
@@ -312,9 +325,24 @@ final class Doorkeep_Plugin
         return __('<strong>Error:</strong> we could not verify this request. Please try again.', 'doorkeep');
     }
 
+    /** wp-login.php, where the login, registration and lost-password forms live. */
+    private static function on_wp_login(): bool
+    {
+        return ($GLOBALS['pagenow'] ?? '') === 'wp-login.php';
+    }
+
+    /**
+     * Only logins from forms that carry the widget are checked: wp-login.php
+     * (including wp_login_form() posting there) and WooCommerce My Account.
+     * Other callers of wp_signon()/wp_authenticate() (XML-RPC, custom
+     * plugins) are left alone rather than broken.
+     */
     public static function check_login($user, $username, $password)
     {
         if (empty($_POST) || $username === '' || is_wp_error($user) && $user->get_error_code() === 'empty_username') {
+            return $user;
+        }
+        if (!self::on_wp_login() && !isset($_POST['woocommerce-login-nonce'])) {
             return $user;
         }
         $v = self::verify('login');
@@ -332,6 +360,11 @@ final class Doorkeep_Plugin
 
     public static function check_lostpassword($errors): void
     {
+        // Administrators sending a reset link from the Users screen, and any
+        // other server-side caller, have no browser to check.
+        if (is_admin() || (!self::on_wp_login() && !isset($_POST['wc_reset_password']))) {
+            return;
+        }
         $v = self::verify('lostpassword');
         if (!$v['ok'] && $errors instanceof WP_Error) {
             $errors->add('doorkeep_failed', self::message());
@@ -340,8 +373,9 @@ final class Doorkeep_Plugin
 
     public static function check_comment(array $data): array
     {
-        // Trackbacks and pingbacks have no browser to check.
-        if (in_array($data['comment_type'] ?? '', ['pingback', 'trackback'], true)) {
+        // Trackbacks and pingbacks have no browser to check; moderators
+        // replying from the dashboard (or the REST API) are trusted.
+        if (in_array($data['comment_type'] ?? '', ['pingback', 'trackback'], true) || current_user_can('moderate_comments')) {
             return $data;
         }
         $v = self::verify('comment');
@@ -390,6 +424,10 @@ final class Doorkeep_Plugin
      */
     public static function check_block_checkout($order, $request): void
     {
+        // Only placing the order (POST) is checked, not other updates.
+        if (strtoupper((string)$request->get_method()) !== 'POST') {
+            return;
+        }
         $token = sanitize_text_field((string)$request->get_header('x-doorkeep-response'));
         $v = self::verify('checkout', $token);
         if (!$v['ok']) {

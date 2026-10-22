@@ -53,8 +53,15 @@ func Analyze(f scoring.Features, r *http.Request, trustProxy bool, jsUA string, 
 
 	secure := Secure(r, trustProxy)
 	chUA := r.Header.Get("Sec-CH-UA")
+	// Every browser on iOS is WebKit: no Client Hints whatever its brand,
+	// and Fetch Metadata as the iOS version's Safari.
+	if payload.OSFamily(hdrUA) == "ios" {
+		fam, major = "safari", payload.IOSMajor(hdrUA)
+	}
 	if secure {
-		if chromium[fam] && major >= 89 && chUA == "" {
+		// Android WebView sends Client Hints only when the embedding app
+		// opts in, so their absence there says nothing.
+		if chromium[fam] && major >= 89 && chUA == "" && !payload.IsAndroidWebView(hdrUA) {
 			f.SetBool("net.ch_missing", true)
 		} else if chromium[fam] {
 			f.SetBool("net.ch_missing", false)

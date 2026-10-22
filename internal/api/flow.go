@@ -285,7 +285,7 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	params := pow.Params{Salt: n.PoWSalt, Bits: n.PoWBits, N: n.PoWN}
 	if !pow.Verify(n.ID, params, req.Sol) {
 		s.Vel.Add(s.challengeFailKey(s.clientIP(r)))
-		_, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedPoW}, nonce.ChallengedPoW, now, func(x *nonce.Nonce) {
+		n2, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedPoW}, nonce.ChallengedPoW, now, func(x *nonce.Nonce) {
 			x.Attempts++
 			if x.Attempts >= maxAttempts {
 				x.State = nonce.Burned
@@ -294,6 +294,9 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			clientError(w, http.StatusConflict, "nonce-used-or-expired")
 			return
+		}
+		if n2.State == nonce.Burned {
+			s.recordChallengeFailure(ctx, n2, site, "pow")
 		}
 		clientError(w, http.StatusBadRequest, "challenge-failed")
 		return

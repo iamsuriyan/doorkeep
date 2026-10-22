@@ -237,12 +237,15 @@ function bindForm(w: Widget): void {
   if (bound.has(form)) return;
   bound.add(form);
   let pass = false;
+  let busy = false; // a second click while a token is being fetched must not submit twice
   form.addEventListener(
     "submit",
     (e) => {
       if (pass) { pass = false; return; }
       e.preventDefault();
       e.stopImmediatePropagation();
+      if (busy) return;
+      busy = true;
       const submitter = (e as SubmitEvent).submitter as HTMLElement | null;
       execute(w.sitekey, { action: w.action })
         .then((tok) => {
@@ -254,6 +257,7 @@ function bindForm(w: Widget): void {
           w.opts["error-callback"]?.(err);
         })
         .finally(() => {
+          busy = false;
           pass = true;
           if (typeof form.requestSubmit === "function") form.requestSubmit(submitter && (submitter as any).form === form ? (submitter as HTMLButtonElement) : undefined);
           else form.submit();

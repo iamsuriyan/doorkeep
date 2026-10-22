@@ -13,6 +13,22 @@ function get_option($k, $d = []) { return $GLOBALS['dk_opts']; }
 function wp_unslash($v) { return $v; }
 function esc_url_raw($u, $p = null) { return $u; }
 function sanitize_text_field($v) { return trim((string)$v); }
+function esc_attr($v) { return htmlspecialchars((string)$v, ENT_QUOTES); }
+function __($t, $d = null) { return $t; }
+function is_wp_error($x) { return $x instanceof WP_Error; }
+function is_admin() { return $GLOBALS['dk_is_admin'] ?? false; }
+function current_user_can($cap) { return in_array($cap, $GLOBALS['dk_caps'] ?? [], true); }
+function wp_enqueue_script(...$a) { $GLOBALS['dk_enqueued'] = true; }
+function wp_remote_post($url, $args) { $GLOBALS['dk_remote'][] = $args['body']; return ['code' => 200, 'body' => json_encode(['success' => ($args['body']['response'] ?? '') === 'good'])]; }
+function wp_remote_retrieve_response_code($r) { return $r['code']; }
+function wp_remote_retrieve_body($r) { return $r['body']; }
+function wp_die($m) { throw new RuntimeException('wp_die: ' . $m); }
+class WP_Error {
+    public array $errors = [];
+    public function __construct(string $code = '', string $msg = '') { if ($code !== '') { $this->errors[$code] = $msg; } }
+    public function add($code, $msg) { $this->errors[$code] = $msg; }
+    public function get_error_code() { return array_key_first($this->errors) ?? ''; }
+}
 
 require __DIR__ . '/../doorkeep/doorkeep.php';
 
@@ -62,5 +78,55 @@ $GLOBALS['dk_opts']['woocommerce'] = 1;
 $GLOBALS['dk_hooks'] = [];
 Doorkeep_Plugin::init();
 check('WooCommerce hooks block checkout', in_array('woocommerce_store_api_checkout_update_order_from_request', $GLOBALS['dk_hooks'], true));
+
+// ---- which requests are checked ----
+$GLOBALS['dk_opts'] = ['public_url' => 'https://x', 'site_key' => 'k', 'secret' => 's'];
+$user = (object)['ID' => 1];
+function reset_req(string $page, array $post): void
+{
+    $GLOBALS['pagenow'] = $page;
+    $_POST = $post;
+    $GLOBALS['dk_remote'] = [];
+    $GLOBALS['dk_is_admin'] = false;
+    $GLOBALS['dk_caps'] = [];
+}
+
+reset_req('wp-login.php', ['log' => 'admin']);
+check('wp-login.php login without a token is refused', Doorkeep_Plugin::check_login($user, 'admin', 'pw') instanceof WP_Error);
+reset_req('wp-login.php', ['log' => 'admin', 'dk-response' => 'good']);
+check('wp-login.php login with a valid token passes', Doorkeep_Plugin::check_login($user, 'admin', 'pw') === $user);
+reset_req('index.php', ['log' => 'admin', 'woocommerce-login-nonce' => 'n']);
+check('WooCommerce My Account login is checked', Doorkeep_Plugin::check_login($user, 'admin', 'pw') instanceof WP_Error);
+reset_req('index.php', ['some_plugin_login' => '1']);
+check('other wp_signon callers are not broken', Doorkeep_Plugin::check_login($user, 'admin', 'pw') === $user && $GLOBALS['dk_remote'] === []);
+
+reset_req('wp-login.php', ['user_login' => 'a']);
+$e = new WP_Error();
+Doorkeep_Plugin::check_lostpassword($e);
+check('wp-login.php lost password without a token is refused', $e->get_error_code() === 'doorkeep_failed');
+reset_req('users.php', []);
+$GLOBALS['dk_is_admin'] = true;
+$e = new WP_Error();
+Doorkeep_Plugin::check_lostpassword($e);
+check('admin "send password reset" is not blocked', $e->get_error_code() === '' && $GLOBALS['dk_remote'] === []);
+reset_req('index.php', ['wc_reset_password' => 'true', 'user_login' => 'a']);
+$e = new WP_Error();
+Doorkeep_Plugin::check_lostpassword($e);
+check('WooCommerce lost password is checked', $e->get_error_code() === 'doorkeep_failed');
+
+reset_req('admin-ajax.php', []);
+$GLOBALS['dk_caps'] = ['moderate_comments'];
+check('moderator replies are not blocked', Doorkeep_Plugin::check_comment(['comment_type' => 'comment'])['comment_type'] === 'comment');
+reset_req('wp-comments-post.php', []);
+try {
+    Doorkeep_Plugin::check_comment(['comment_type' => 'comment']);
+    check('anonymous comment without a token is refused', false);
+} catch (RuntimeException $x) {
+    check('anonymous comment without a token is refused', str_starts_with($x->getMessage(), 'wp_die'));
+}
+
+$GLOBALS['dk_enqueued'] = false;
+$html = Doorkeep_Plugin::placeholder_login_form_middle('<p>x</p>');
+check('wp_login_form gets the widget and the snippet', str_contains($html, 'data-action="login"') && $GLOBALS['dk_enqueued']);
 
 exit($failures === 0 ? 0 : 1);

@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"slices"
 
 	"github.com/iamsuriyan/doorkeep/internal/challenge/visual"
 	"github.com/iamsuriyan/doorkeep/internal/nonce"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/model"
+	"github.com/iamsuriyan/doorkeep/internal/store"
 )
 
 const visualAttempts = 3
@@ -92,8 +94,7 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 			}
 		})
 		if err != nil || n2.State == nonce.Burned {
-			_ = s.Store.UpdateEventChallenge(ctx, n.EventID, "visual", false, max(n.Risk, site.ThresholdsFor(n.Action).Block), scoring.Block, nil)
-			if ev, err := s.Store.GetEvent(ctx, n.EventID); err == nil {
+			if ev := s.recordChallengeFailure(ctx, n, site, "visual"); ev != nil {
 				s.Models.Label(site.ID, ev.Features, true, model.WeightWeak)
 			}
 			clientError(w, http.StatusConflict, "challenge-exhausted")
@@ -120,6 +121,22 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 	_ = s.Store.UpdateEventChallenge(ctx, ev.ID, "visual", true, d.Risk, d.Outcome, d.Reasons)
 	s.Models.Label(site.ID, ev.Features, false, model.WeightWeak)
 	s.mintAndRespond(w, r, site, n, d, "visual", []nonce.State{nonce.ChallengedVisual})
+}
+
+// recordChallengeFailure marks the event of a nonce whose challenge attempts
+// ran out: no token is issued, so it is recorded as a block, keeping the
+// reasons that led to the challenge.
+func (s *Server) recordChallengeFailure(ctx context.Context, n *nonce.Nonce, site *store.Site, kind string) *store.Event {
+	ev, err := s.Store.GetEvent(ctx, n.EventID)
+	if err != nil {
+		return nil
+	}
+	reasons := append(slices.Clone(ev.Reasons), scoring.Reason{Code: "CHALLENGE_FAILED"})
+	risk := max(n.Risk, site.ThresholdsFor(n.Action).Block)
+	if err := s.Store.UpdateEventChallenge(ctx, ev.ID, kind, false, risk, scoring.Block, reasons); err != nil {
+		s.Log.Error("event update", "err", err)
+	}
+	return ev
 }
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {

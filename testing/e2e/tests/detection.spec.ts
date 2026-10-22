@@ -1,9 +1,9 @@
 // End-to-end detection matrix (design section 10.4, M1 subset).
 // Assertions are on the siteverify response the customer backend receives,
 // never on UI. Each test logs risk and reasons so drift is visible in CI.
-import { chromium, expect, firefox, test, type Page } from "@playwright/test";
+import { chromium, expect, firefox, test, webkit, type Page } from "@playwright/test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -123,4 +123,42 @@ test("a real Chromium with no automation is allowed", async () => {
     try { process.kill(-p.pid!, "SIGTERM"); } catch {}
     rmSync(profile, { recursive: true, force: true });
   }
+});
+
+// Clicking submit again while the token is being fetched must not submit
+// twice. A page that handles submit in JavaScript (fetch, SPA) would
+// otherwise run its handler once per click, each with its own session.
+test("a double click submits the form once", async () => {
+  const b = await chromium.launch({ headless: true });
+  const page = await b.newPage();
+  await page.goto(`${BASE}/?run=double-click`);
+  await page.waitForFunction(() => (window as any).doorkeep !== undefined);
+  await page.evaluate(() => {
+    (window as any).submits = 0;
+    document.getElementById("f")!.addEventListener("submit", (e) => { e.preventDefault(); (window as any).submits++; });
+  });
+  await page.fill("#name", "Asha");
+  await page.fill("#email", "asha@example.com");
+  for (let i = 0; i < 3; i++) await page.click("#go");
+  await page.waitForFunction(() => (window as any).submits > 0, null, { timeout: 30_000 });
+  await page.waitForTimeout(3000); // let any duplicate submissions finish
+  expect(await page.evaluate(() => (window as any).submits)).toBe(1);
+  await b.close();
+});
+
+// Safari's engine must produce a payload the server accepts, and none of
+// the browser-consistency rules may misfire on a genuine WebKit. (Playwright
+// drives it, so automation markers are expected and allowed to fire.)
+test("WebKit payload is accepted and consistent", async () => {
+  test.skip(!existsSync(webkit.executablePath()), "playwright install webkit");
+  const b = await webkit.launch({ headless: false });
+  const page = await b.newPage();
+  const v = await signup(page, "webkit");
+  log("webkit", v);
+  expect(v["error-codes"]).not.toContain("missing-input-response");
+  expect(v.doorkeep, "siteverify returned a verdict").toBeDefined();
+  for (const r of ["UA_ENGINE_MISMATCH", "UA_FEATURE_MISMATCH", "UA_CLIENT_HINTS_MISMATCH", "UA_HEADER_JS_MISMATCH", "GPU_OS_MISMATCH", "UA_CH_UNEXPECTED"]) {
+    expect(v.doorkeep!.reasons, `${r} must not fire on real WebKit`).not.toContain(r);
+  }
+  await b.close();
 });

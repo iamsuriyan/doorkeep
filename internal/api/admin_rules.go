@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,11 +33,7 @@ func (s *Server) siteRules(ctx context.Context, siteID string) *rules.Set {
 	set = nil
 	ov, err := s.overrides(ctx, siteID)
 	if err == nil && len(ov) > 0 {
-		if eff, err := rules.Effective(s.Rules, ov, "site"); err == nil {
-			set = eff
-		} else {
-			s.Log.Error("site rules invalid; using built-ins", "site", siteID, "err", err)
-		}
+		set = s.effectiveRules(siteID, ov)
 	}
 	if set == nil {
 		set = s.Rules
@@ -49,6 +46,36 @@ func (s *Server) siteRules(ctx context.Context, siteID string) *rules.Set {
 	s.rc.at[siteID] = time.Now()
 	s.rc.mu.Unlock()
 	return set
+}
+
+// effectiveRules applies a site's overrides. An override that no longer
+// compiles (for example one stored by an older version for a rule that has
+// since changed) is skipped on its own and logged, so it cannot take the
+// site's other overrides, such as a rule switched off for false positives,
+// down with it.
+func (s *Server) effectiveRules(siteID string, ov map[string]rules.Override) *rules.Set {
+	if eff, err := rules.Effective(s.Rules, ov, "site"); err == nil {
+		return eff
+	}
+	ids := make([]string, 0, len(ov))
+	for id := range ov {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	good := map[string]rules.Override{}
+	for _, id := range ids {
+		if _, err := rules.Effective(s.Rules, map[string]rules.Override{id: ov[id]}, "check"); err != nil {
+			s.Log.Error("site rule override skipped", "site", siteID, "rule", id, "err", err)
+			continue
+		}
+		good[id] = ov[id]
+	}
+	eff, err := rules.Effective(s.Rules, good, "site")
+	if err != nil {
+		s.Log.Error("site rules invalid; using built-ins", "site", siteID, "err", err)
+		return s.Rules
+	}
+	return eff
 }
 
 func (s *Server) invalidateRules(siteID string) {
@@ -125,8 +152,9 @@ func (s *Server) adminPutRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before, had := ov[id]
-	ov[id] = o
-	if _, err := rules.Effective(s.Rules, ov, "check"); err != nil {
+	// Validate the override being saved on its own: a stale override stored
+	// by an older version must not block edits to every other rule.
+	if _, err := rules.Effective(s.Rules, map[string]rules.Override{id: o}, "check"); err != nil {
 		problem(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
@@ -201,16 +229,11 @@ func (s *Server) adminRuleLab(w http.ResponseWriter, r *http.Request) {
 	if in.Days <= 0 || in.Days > 30 {
 		in.Days = 7
 	}
-	ov, err := s.overrides(r.Context(), site.ID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
 	if in.Override.Mode == "" {
 		in.Override.Mode = rules.ModeEnforce
 	}
-	ov[in.Rule] = in.Override
-	cand, err := rules.Effective(s.Rules, ov, "lab")
+	// The lab evaluates one rule, so only that override has to compile.
+	cand, err := rules.Effective(s.Rules, map[string]rules.Override{in.Rule: in.Override}, "lab")
 	if err != nil {
 		problem(w, http.StatusBadRequest, "invalid", err.Error())
 		return

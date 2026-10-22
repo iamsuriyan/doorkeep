@@ -92,7 +92,9 @@
 
 # ---------- fingerprint consistency ----------
 - id: UA_ENGINE_MISMATCH
-  when: "(fp.ua_family in ['firefox'] && auto.eng in ['v8','jsc']) || (fp.ua_family in ['chrome','edge','opera','samsung'] && auto.eng in ['spidermonkey','jsc'] && fp.os_family != 'ios') || (fp.ua_family == 'safari' && auto.eng in ['v8','spidermonkey'])"
+  # Every browser on iOS runs JavaScriptCore, so jsc is expected there for
+  # Firefox and Chromium-branded browsers alike.
+  when: "(fp.ua_family in ['firefox'] && auto.eng in ['v8','jsc'] && fp.os_family != 'ios') || (fp.ua_family in ['chrome','edge','opera','samsung'] && auto.eng in ['spidermonkey','jsc'] && fp.os_family != 'ios') || (fp.ua_family == 'safari' && auto.eng in ['v8','spidermonkey'])"
   unless: "prof.rfp == 1"
   weight: 60
   description: JavaScript engine contradicts the claimed browser

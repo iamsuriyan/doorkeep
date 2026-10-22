@@ -78,7 +78,7 @@ export default async function setup() {
       execFileSync(join(ROOT, "testing/wordpress/up.sh"), [k, sec], { stdio: "inherit" });
       process.env.DK_WP_READY = "1";
       const wc = join(ROOT, "testing/wordpress/.wc");
-      if (existsSync(wc)) process.env.DK_WC_READY = readFileSync(wc, "utf8").trim(); // "<product id> <checkout page id>"
+      if (existsSync(wc)) process.env.DK_WC_READY = readFileSync(wc, "utf8").trim(); // "<product id> <checkout page id> <my account page id>"
       wp = true;
     } catch (e) {
       console.warn("WordPress unavailable:", String(e).slice(0, 160));
