@@ -1,0 +1,5 @@
+packages:
+  - web/*
+  - integrations/nextjs
+  - integrations/node
+  - testing/e2e

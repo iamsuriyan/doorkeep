@@ -1,0 +1,30 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage*
+# Node
+node_modules/
+web/snippet/dist/
+web/dashboard/dist/
+.pnpm-store/
+# Data
+/data/
+*.db
+*.db-wal
+*.db-shm
+ipdata.bin
+# Env
+.env
+.env.*
+!.env.example
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+# Test artefacts
+testing/e2e/test-results/
+testing/e2e/playwright-report/
+playwright/.cache/

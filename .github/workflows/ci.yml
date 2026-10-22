@@ -1,0 +1,38 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - uses: dominikh/staticcheck-action@v1
+        with:
+          install-go: false
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r test
+      - name: snippet size budget (14 KB gzip)
+        run: |
+          SIZE=$(gzip -c web/snippet/dist/dk.js | wc -c)
+          echo "dk.js gzip: $SIZE bytes"
+          test "$SIZE" -le 14336
