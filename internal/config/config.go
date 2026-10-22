@@ -19,7 +19,10 @@ import (
 
 // Config is the runtime configuration.
 type Config struct {
-	Listen         string        `yaml:"listen"`
+	Listen string `yaml:"listen"`
+	// AdminListen, if set, serves the dashboard and admin API only on this
+	// address (e.g. 127.0.0.1:8081) and removes them from Listen.
+	AdminListen    string        `yaml:"admin_listen"`
 	DataDir        string        `yaml:"data_dir"`
 	PublicURL      string        `yaml:"public_url"`
 	TrustedProxies []string      `yaml:"trusted_proxies"`
@@ -88,6 +91,7 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	env("DOORKEEP_LISTEN", &c.Listen)
+	env("DOORKEEP_ADMIN_LISTEN", &c.AdminListen)
 	env("DOORKEEP_DATA_DIR", &c.DataDir)
 	env("DOORKEEP_PUBLIC_URL", &c.PublicURL)
 	env("DOORKEEP_SECRET", &c.Secret)
@@ -170,6 +174,9 @@ func (c *Config) validate() error {
 	}
 	if c.TLSCert != "" && len(c.AutocertDomains) > 0 {
 		return errors.New("config: use either tls_cert/tls_key or autocert_domains, not both")
+	}
+	if c.AdminListen != "" && c.AdminListen == c.Listen {
+		return errors.New("config: admin_listen must differ from listen")
 	}
 	if c.TokenTTL <= 0 || c.TokenTTL > time.Hour {
 		return errors.New("config: token_ttl must be in (0, 1h]")

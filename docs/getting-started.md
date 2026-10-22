@@ -31,7 +31,10 @@ doorkeep admin create --user ops      # password on stdin
 ```
 
 `site create` prints a public site key and a secret that is shown once. The
-dashboard is at `/admin/`.
+dashboard is at `/admin/` on the admin address: `http://127.0.0.1:8081/admin/`
+with Docker (published on localhost only). For the binary, set
+`DOORKEEP_ADMIN_LISTEN=127.0.0.1:8081` so the dashboard is not reachable
+through your sites' `/_dk/` proxies.
 
 ## 4. Serve doorkeep on your origin
 

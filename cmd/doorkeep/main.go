@@ -185,6 +185,19 @@ func serve(args []string) error {
 		log.Warn("TLS not terminated by doorkeep: JA4 and HTTP/2 fingerprints are only available via Doorkeep-TLS/Doorkeep-H2 headers from trusted proxies")
 	}
 	errc := make(chan error, 1)
+	var admin *http.Server
+	if cfg.AdminListen != "" {
+		admin = &http.Server{Addr: cfg.AdminListen, Handler: srv.AdminHandler(), ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+		go func() {
+			log.Info("admin listening (dashboard and admin API only here)", "addr", cfg.AdminListen)
+			if err := admin.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- fmt.Errorf("admin listener: %w", err)
+			}
+		}()
+	} else {
+		log.Warn("dashboard and admin API are on the public listener; set admin_listen to move them to a private address")
+	}
 	go func() {
 		log.Info("doorkeep listening", "addr", cfg.Listen, "tls", cfg.TLSEnabled(), "version", version, "data_dir", cfg.DataDir, "rules", len(rs.Rules()))
 		errc <- hs.Serve(ln)
@@ -199,6 +212,9 @@ func serve(args []string) error {
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := hs.Shutdown(sctx)
+		if admin != nil {
+			_ = admin.Shutdown(sctx)
+		}
 		if serr := db.SaveModels(context.Background(), srv.Models.Snapshot(), time.Now()); serr != nil {
 			log.Error("model save on shutdown", "err", serr)
 		}

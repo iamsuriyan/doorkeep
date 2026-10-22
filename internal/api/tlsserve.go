@@ -29,6 +29,11 @@ func ConfigureTLS(hs *http.Server, ln net.Listener, tlsCfg *tls.Config) (net.Lis
 	if tlsCfg.NextProtos == nil {
 		tlsCfg.NextProtos = []string{"h2", "http/1.1"}
 	}
+	// x/net/http2.Server and ServeConn are deprecated in favour of
+	// net/http's built-in HTTP/2, but net/http offers no way to serve an
+	// HTTP/2 connection through a wrapper that records its first frames,
+	// which the HTTP/2 fingerprint needs. They remain fully functional.
+	//lint:ignore SA1019 see above
 	h2s := &http2.Server{}
 	hs.ConnContext = func(ctx context.Context, c net.Conn) context.Context {
 		if tc, ok := c.(*tls.Conn); ok {
@@ -45,6 +50,7 @@ func ConfigureTLS(hs *http.Server, ln net.Listener, tlsCfg *tls.Config) (net.Lis
 			if rc, ok := c.NetConn().(*tlsfp.Conn); ok {
 				ctx = context.WithValue(ctx, ctxTLSConn, rc)
 			}
+			//lint:ignore SA1019 see the note on h2s
 			h2s.ServeConn(tee, &http2.ServeConnOpts{Context: ctx, Handler: h, BaseConfig: srv})
 		},
 	}

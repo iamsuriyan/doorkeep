@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -215,5 +216,33 @@ func TestAdminEventsRulesLabAndStats(t *testing.T) {
 	// DSAR delete.
 	if code, _, _ := a.do("DELETE", "/admin/v1/sites/site1/events/"+id, nil); code != 204 {
 		t.Fatalf("delete: %d", code)
+	}
+}
+
+func TestAdminListenSeparatesAdmin(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Cfg.AdminListen = "127.0.0.1:0"
+	h.srv.routes()
+	// Public listener: no dashboard, no admin API.
+	for _, p := range []string{"/admin/", "/admin/v1/sites"} {
+		res, err := http.Get(h.http.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != 404 {
+			t.Fatalf("public %s: %d, want 404", p, res.StatusCode)
+		}
+	}
+	// Admin handler: present (401 without login).
+	adm := httptest.NewServer(h.srv.AdminHandler())
+	defer adm.Close()
+	res, _ := http.Get(adm.URL + "/admin/v1/sites")
+	if res.StatusCode != 401 {
+		t.Fatalf("admin listener: %d, want 401", res.StatusCode)
+	}
+	// And the public API is not on the admin listener.
+	res, _ = http.Post(adm.URL+"/v1/siteverify", "application/x-www-form-urlencoded", nil)
+	if res.StatusCode != 404 {
+		t.Fatalf("public API on admin listener: %d", res.StatusCode)
 	}
 }

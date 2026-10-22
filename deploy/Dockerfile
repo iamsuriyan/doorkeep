@@ -28,9 +28,9 @@ RUN mkdir -p /data && chown 65532:65532 /data && chmod 0700 /data
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /doorkeep /usr/local/bin/doorkeep
 COPY --from=build --chown=65532:65532 /data /data
-ENV DOORKEEP_DATA_DIR=/data DOORKEEP_LISTEN=:8080
+ENV DOORKEEP_DATA_DIR=/data DOORKEEP_LISTEN=:8080 DOORKEEP_ADMIN_LISTEN=:8081
 VOLUME /data
-EXPOSE 8080
+EXPOSE 8080 8081
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/doorkeep"]
 CMD ["serve"]

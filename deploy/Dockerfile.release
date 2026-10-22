@@ -6,9 +6,9 @@ FROM gcr.io/distroless/static-debian12:nonroot
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/doorkeep /usr/local/bin/doorkeep
 COPY --from=prep --chown=65532:65532 /data /data
-ENV DOORKEEP_DATA_DIR=/data DOORKEEP_LISTEN=:8080
+ENV DOORKEEP_DATA_DIR=/data DOORKEEP_LISTEN=:8080 DOORKEEP_ADMIN_LISTEN=:8081
 VOLUME /data
-EXPOSE 8080
+EXPOSE 8080 8081
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/doorkeep"]
 CMD ["serve"]

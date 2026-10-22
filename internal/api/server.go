@@ -34,19 +34,20 @@ var assets embed.FS
 
 // Server holds dependencies for the HTTP handlers.
 type Server struct {
-	Cfg    *config.Config
-	Store  store.Store
-	Rules  *rules.Set
-	Ring   *token.Ring
-	Keys   *pseudo.Keyer
-	IP     *ipintel.Store
-	Vel    velocity.Counter
-	Visual *visual.Generator
-	Models *model.Registry
-	rc     ruleCache
-	Log    *slog.Logger
-	Now    func() time.Time
-	mux    *http.ServeMux
+	Cfg      *config.Config
+	Store    store.Store
+	Rules    *rules.Set
+	Ring     *token.Ring
+	Keys     *pseudo.Keyer
+	IP       *ipintel.Store
+	Vel      velocity.Counter
+	Visual   *visual.Generator
+	Models   *model.Registry
+	rc       ruleCache
+	Log      *slog.Logger
+	Now      func() time.Time
+	mux      *http.ServeMux
+	adminMux *http.ServeMux
 }
 
 // New wires a server.
@@ -83,12 +84,32 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/report", s.handleReport)
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
 	m.HandleFunc("GET /readyz", s.handleReady)
-	s.adminRoutes(m)
+	// With admin_listen set, the dashboard and admin API are served only by
+	// AdminHandler on that address, never on the public listener (which
+	// sites proxy under /_dk/ on their own domains).
+	if s.Cfg.AdminListen == "" {
+		s.adminRoutes(m)
+	}
 	s.mux = m
+	am := http.NewServeMux()
+	s.adminRoutes(am)
+	am.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
+	s.adminMux = am
+}
+
+// AdminHandler serves only the dashboard and admin API (for admin_listen).
+func (s *Server) AdminHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.serve(w, r, s.adminMux)
+	})
 }
 
 // ServeHTTP implements http.Handler with security headers and panic safety.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.serve(w, r, s.mux)
+}
+
+func (s *Server) serve(w http.ResponseWriter, r *http.Request, mux *http.ServeMux) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			s.Log.Error("panic", "path", r.URL.Path, "err", rec)
@@ -99,7 +120,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
-	s.mux.ServeHTTP(w, r)
+	mux.ServeHTTP(w, r)
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

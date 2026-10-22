@@ -6,6 +6,13 @@ on:
 permissions:
   contents: read
 jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: gitleaks (full history)
+        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:latest git /repo --no-banner --config /repo/.gitleaks.toml
   go:
     runs-on: ubuntu-latest
     steps:
@@ -15,7 +22,7 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - name: generated docs are current
-        run: go run ./tools/docgen -out docs/reference && git diff --exit-code docs/reference
+        run: go run ./tools/docgen -out docs/reference && git diff --exit-code docs/reference/features.md docs/reference/reason-codes.md
       - run: go test -race -count=1 ./...
       - name: store tests on Postgres, velocity on Redis
         run: |

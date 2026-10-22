@@ -80,11 +80,6 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) *store.Site {
 
 // ---------------- sites ----------------
 
-type siteView struct {
-	*store.Site
-	SecretHash string `json:"-"`
-}
-
 func (s *Server) adminListSites(w http.ResponseWriter, r *http.Request) {
 	sites, err := s.Store.ListSites(r.Context())
 	if err != nil {

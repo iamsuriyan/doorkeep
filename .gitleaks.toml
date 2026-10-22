@@ -1,0 +1,9 @@
+# Secret scanning config. The only allow-listed file holds the official,
+# publicly published PASETO v4 test vectors (keys are public by design),
+# byte-identical to github.com/paseto-standard/test-vectors/v4.json.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Published PASETO test vectors"
+paths = ['''internal/token/testdata/v4\.json''']

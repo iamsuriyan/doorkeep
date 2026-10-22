@@ -39,7 +39,8 @@ docker compose -f deploy/docker-compose.yml run --rm doorkeep \
 ```
 
 `site create` prints a public site key and a secret that is shown once. For
-the dashboard at `/admin/`, create an admin (the password is read from stdin):
+the dashboard at `http://127.0.0.1:8081/admin/` (published on localhost only),
+create an admin (the password is read from stdin):
 
 ```sh
 docker compose -f deploy/docker-compose.yml run --rm doorkeep admin create --user ops
