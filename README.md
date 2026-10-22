@@ -88,10 +88,11 @@ doorkeep.
 
 ## Status
 
-Pre-alpha. Done: the core scoring loop (M1); server-side signals: IP
-intelligence, velocity, JA4 and HTTP/2 fingerprints (M2); proof of work plus
-an accessible visual and audio challenge (M3); the learned model layer (M4);
-the admin API and dashboard (M5); integrations and edge mode (M6).
+Pre-release. All seven milestones of the [design](docs/design/v1.md) are
+built: scoring loop, server-side signals (IP intelligence, velocity, JA4 and
+HTTP/2 fingerprints), proof of work plus an accessible visual and audio
+challenge, the learned model layer, the dashboard, integrations and edge
+mode, and cluster mode on Postgres and Redis.
 
 | Setup (measured end to end in real browsers) | Risk | Outcome |
 |---|---|---|
@@ -104,8 +105,9 @@ the admin API and dashboard (M5); integrations and edge mode (M6).
 | Real Chromium, no automation | 0 | allow |
 
 Known gaps are tracked in the open in
-[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next: cluster support
-and release (M7).
+[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). One node on SQLite handled 1,496 HTTP requests per second with submit p95 at
+3.6 ms in the [load test](testing/load/README.md). Documentation starts at
+[docs/README.md](docs/README.md).
 
 ### Integrations
 
