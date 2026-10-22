@@ -110,15 +110,56 @@ async function execute(sitekey = cfg.sitekey, opts: { action?: string } = {}): P
     prefetch(sitekey, action);
     return res.token;
   }
-  if (res.status === "challenge" && res.kind === "pow" && res.pow) {
-    const sol = await solvePoW(s.nonce, res.pow.salt, res.pow.bits, res.pow.n);
-    const done = await post<SubmitResp>("/v1/challenge", { n: s.nonce, kind: "pow", sol });
-    if (done.token) {
-      prefetch(sitekey, action);
-      return done.token;
-    }
+  let cur = res;
+  if (cur.status === "challenge" && cur.kind === "pow" && cur.pow) {
+    const sol = await solvePoW(s.nonce, cur.pow.salt, cur.pow.bits, cur.pow.n);
+    cur = await post<SubmitResp>("/v1/challenge", { n: s.nonce, kind: "pow", sol });
+  }
+  if (cur.status === "challenge" && cur.kind === "visual" && cur.visual) {
+    const token = await visualChallenge(s.nonce, cur.visual);
+    prefetch(sitekey, action);
+    return token;
+  }
+  if (cur.token) {
+    prefetch(sitekey, action);
+    return cur.token;
   }
   throw new Error("doorkeep: no token");
+}
+
+let uiLoad: Promise<any> | null = null;
+
+/** Load the challenge dialog bundle once, on demand. */
+function loadUI(): Promise<any> {
+  if ((window as any).__doorkeepUI) return Promise.resolve((window as any).__doorkeepUI);
+  uiLoad ||= new Promise((resolve, reject) => {
+    const sc = document.createElement("script");
+    sc.src = cfg.endpoint + "/v1/dk-ui.js";
+    sc.async = true;
+    sc.onload = () => resolve((window as any).__doorkeepUI);
+    sc.onerror = () => { uiLoad = null; reject(new Error("doorkeep: challenge UI failed to load")); };
+    document.head.appendChild(sc);
+  });
+  return uiLoad;
+}
+
+async function visualChallenge(nonce: string, v: import("./schema").VisualInfo): Promise<string> {
+  const ui = await loadUI();
+  const abs = (p: string) => cfg.endpoint + p;
+  return ui.open({
+    image: abs(v.image), audio: abs(v.audio), audioSlow: abs(v.audio_slow),
+    length: v.length, attemptsLeft: v.attempts_left, accessibilityUrl: v.accessibility_url,
+    submit: async (answer: string) => {
+      try {
+        const r = await post<SubmitResp>("/v1/challenge", { n: nonce, kind: "visual", answer });
+        if (r.status === "ok" && r.token) return { ok: true, token: r.token };
+        return { ok: false, attemptsLeft: r.visual?.attempts_left };
+      } catch (e) {
+        if (String(e).includes("challenge-exhausted")) return { ok: false, exhausted: true };
+        throw e;
+      }
+    },
+  });
 }
 
 function prefetch(sitekey: string, action: string): void {

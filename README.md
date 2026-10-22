@@ -78,24 +78,34 @@ doorkeep.
 
 ## Status
 
-Pre-alpha. Milestones 1 (core scoring loop) and 2 (server-side signals: IP
-intelligence, velocity, JA4 and HTTP/2 fingerprints) are done.
+Pre-alpha. Milestones 1 (core scoring loop), 2 (server-side signals: IP
+intelligence, velocity, JA4 and HTTP/2 fingerprints) and 3 (proof-of-work
+plus an accessible visual and audio challenge) are done.
 
 | Setup (measured end to end in real browsers) | Risk | Outcome |
 |---|---|---|
 | Default headless Chromium (Playwright) | 100 | block |
 | Default headless Firefox (Playwright) | 100 | block |
 | playwright-extra + stealth plugin, headless | 100 | block |
-| Headed Chromium over CDP, webdriver flag removed | 70 | challenged |
+| Headed Chromium over CDP, webdriver flag removed | 70 | stopped at visual challenge |
 | Stealth plugin + synthesised human-like input | 25 | allow (known miss) |
 | Script forging a perfect payload over Go TLS | 55 | challenged |
 | Real Chromium, no automation | 0 | allow |
 
 Known gaps are tracked in the open in
-[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next:
-server-side TLS/HTTP2 fingerprints, IP intelligence and velocity (M2), visual
-and audio challenges (M3), the model layer (M4), dashboard (M5) and
-integrations (M6).
+[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next: the model layer
+(M4), dashboard (M5), integrations and edge mode (M6), cluster and release (M7).
+
+### Challenges
+
+Risk 35 to 54 gets an invisible proof of work. Risk 55 to 74 gets proof of
+work and then a five-character visual challenge with an audio alternative
+(normal and slow), in an accessible dialog: labelled, keyboard-only
+operable, forced-colours aware, no time pressure, and an optional
+`accessibility_url` escape link per site. It passes axe-core WCAG 2.2 AA
+checks in CI. Risk 75 and above is blocked. Like every captcha, the visual
+challenge is solvable by a multimodal model; it is a cost and a human path,
+not a security boundary.
 
 The design is in [docs/design/v1.md](docs/design/v1.md). The research that
 motivated the project is in [docs/research](docs/research).

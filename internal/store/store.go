@@ -26,6 +26,7 @@ type Site struct {
 	Mode               scoring.SiteMode     `json:"mode"`
 	InteractiveActions []string             `json:"interactive_actions"`
 	StrictIP           bool                 `json:"strict_ip"`
+	AccessibilityURL   string               `json:"accessibility_url,omitempty"` // escape hatch shown in challenges
 	Actions            map[string]ActionCfg `json:"actions,omitempty"`
 	CreatedAt          time.Time            `json:"created_at"`
 }

@@ -27,6 +27,7 @@ const (
 	sessionPerIPPerMin = 60
 	sessionPer24PerMin = 600
 	creditPoW          = 20
+	creditVisual       = 45
 	maxAttempts        = 3
 	canvasWindow       = 24 * time.Hour
 	sessionBodyMax     = 1024
@@ -101,7 +102,17 @@ type submitResp struct {
 	Token  string      `json:"token,omitempty"`
 	Kind   string      `json:"kind,omitempty"`
 	PoW    *pow.Params `json:"pow,omitempty"`
+	Visual *visualInfo `json:"visual,omitempty"`
 	Exp    int64       `json:"exp,omitempty"`
+}
+
+type visualInfo struct {
+	Image         string `json:"image"`      // path relative to the doorkeep endpoint
+	Audio         string `json:"audio"`      // WAV
+	AudioSlow     string `json:"audio_slow"` // slower WAV
+	Length        int    `json:"length"`     // characters to type
+	Attempts      int    `json:"attempts_left"`
+	Accessibility string `json:"accessibility_url,omitempty"`
 }
 
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
@@ -228,15 +239,20 @@ func (s *Server) mintAndRespond(w http.ResponseWriter, r *http.Request, site *st
 }
 
 type challengeReq struct {
-	N    string   `json:"n"`
-	Kind string   `json:"kind"`
-	Sol  []uint32 `json:"sol"`
+	N      string   `json:"n"`
+	Kind   string   `json:"kind"`
+	Sol    []uint32 `json:"sol"`
+	Answer string   `json:"answer"`
 }
 
 func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	var req challengeReq
-	if err := json.NewDecoder(io.LimitReader(r.Body, 8*1024)).Decode(&req); err != nil || req.Kind != "pow" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8*1024)).Decode(&req); err != nil || (req.Kind != "pow" && req.Kind != "visual") {
 		clientError(w, http.StatusBadRequest, "bad-request")
+		return
+	}
+	if req.Kind == "visual" {
+		s.handleVisualAnswer(w, r, req)
 		return
 	}
 	ctx := r.Context()
@@ -273,6 +289,23 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	th := site.ThresholdsFor(n.Action)
+	// Proof of work clears only the lower part of the challenge band. If the
+	// risk is still at or above the challenge threshold after its credit,
+	// escalate to the visual/audio challenge within the same nonce.
+	if n.Risk-creditPoW >= th.Challenge && n.Risk < th.Block && site.Mode != scoring.ModeMonitor {
+		n2, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedPoW}, nonce.ChallengedVisual, now, func(x *nonce.Nonce) {
+			x.Attempts = 0
+			x.Risk = n.Risk - creditPoW
+			x.AnswerMAC = s.Keys.AnswerMAC(x.ID, s.Visual.Answer(x.ID))
+		})
+		if err != nil {
+			clientError(w, http.StatusConflict, "nonce-used-or-expired")
+			return
+		}
+		_ = s.Store.UpdateEventChallenge(ctx, ev.ID, "pow", true, n2.Risk, scoring.Challenge, append(ev.Reasons, scoring.Reason{Code: "CHALLENGE_SOLVED", Weight: -creditPoW}))
+		writeJSON(w, http.StatusOK, s.visualResp(ctx, n2))
+		return
+	}
 	d := scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
 	d = scoring.ApplyChallengeCredit(d, creditPoW, th, site.Mode)
 	if err := s.Store.UpdateEventChallenge(ctx, ev.ID, "pow", true, d.Risk, d.Outcome, d.Reasons); err != nil {

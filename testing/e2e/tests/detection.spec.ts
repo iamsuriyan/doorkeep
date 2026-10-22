@@ -59,23 +59,46 @@ test("default headless Firefox is not allowed", async () => {
   expect(v.doorkeep!.reasons).toContain("AUTOMATION_WEBDRIVER");
 });
 
-test("headed Chromium driven over CDP is challenged", async () => {
+test("headed Chromium driven over CDP does not get through", async () => {
   // Headed, webdriver flag removed: the hardest Playwright configuration
-  // without stealth plugins. The CDP console probe no longer fires on current
-  // Chromium (known miss), so detection rests on behaviour: Playwright fills
-  // fields without key events and clicks at the exact centre with zero press
-  // time. Expected: challenged (PoW), not silently allowed.
+  // without stealth plugins. Detection rests on behaviour (fill without
+  // keys, exact-centre zero-duration clicks): risk 70. The snippet solves the
+  // proof of work automatically, which leaves risk 50, still in the
+  // challenge band, so the visual challenge opens and the form never posts.
+  // When earlier runs from this machine have already raised velocity
+  // signals, it is blocked outright instead. Either way it must not pass.
   const b = await chromium.launch({
     headless: false,
     ignoreDefaultArgs: ["--enable-automation"],
     args: ["--disable-blink-features=AutomationControlled"],
   });
-  const v = await signup(await b.newPage(), "chromium-headed-cdp");
-  log("chromium-headed-cdp", v);
+  const run = "chromium-headed-cdp";
+  const page = await b.newPage();
+  await page.goto(`${BASE}/?run=${run}`);
+  await page.waitForFunction(() => (window as any).doorkeep !== undefined);
+  await page.fill("#name", "Asha");
+  await page.fill("#email", "asha@example.com");
+  await page.click("#go");
+  let dialog = false;
+  let v: Verify | null = null;
+  const end = Date.now() + 25_000;
+  while (Date.now() < end && !dialog && !v) {
+    dialog = await page.evaluate(() => !!document.querySelector("[data-doorkeep-challenge]")).catch(() => false);
+    const r = await fetch(`${BASE}/result?run=${run}`);
+    if (r.status === 200) v = await r.json();
+    await new Promise((res) => setTimeout(res, 300));
+  }
+  if (dialog) {
+    await page.waitForTimeout(1500);
+    const r = await fetch(`${BASE}/result?run=${run}`);
+    console.log(`${run}: visual challenge shown, form posted=${r.status === 200}`);
+    expect(r.status).toBe(404);
+  } else {
+    expect(v).not.toBeNull();
+    log(run, v!);
+    expect(v!.success).toBe(false);
+  }
   await b.close();
-  expect(v.doorkeep!.reasons).not.toContain("AUTOMATION_WEBDRIVER");
-  expect(v.doorkeep!.reasons).toContain("PROGRAMMATIC_FILL_AND_CLICK");
-  expect(v.doorkeep!.challenge === "pow" || !v.success).toBe(true);
 });
 
 test("a real Chromium with no automation is allowed", async () => {

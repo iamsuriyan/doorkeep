@@ -68,11 +68,21 @@ export interface SessionResp {
   deferMs: number;
 }
 
+export interface VisualInfo {
+  image: string;
+  audio: string;
+  audio_slow: string;
+  length: number;
+  attempts_left: number;
+  accessibility_url?: string;
+}
+
 export interface SubmitResp {
-  status: "ok" | "challenge" | "error";
+  status: "ok" | "challenge" | "retry" | "error";
   token?: string;
-  kind?: "pow";
+  kind?: "pow" | "visual";
   pow?: { salt: string; bits: number; n: number };
+  visual?: VisualInfo;
   error?: string;
 }
 

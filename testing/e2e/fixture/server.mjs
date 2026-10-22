@@ -59,6 +59,22 @@ http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     return res.end(`<!doctype html><pre id="result">${JSON.stringify(vr).replace(/</g, "&lt;")}</pre>`);
   }
+  if (req.method === "GET" && url.pathname === "/ui-harness") {
+    // Opens the challenge dialog directly with placeholder media, for
+    // accessibility and keyboard tests.
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>UI harness</title></head><body>
+<button id="opener">Open</button>
+<script src="/_dk/v1/dk-ui.js"></script>
+<script>
+  window.result = null;
+  document.getElementById("opener").onclick = () => window.__doorkeepUI.open({
+    image: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='90'/%3E",
+    audio: "", audioSlow: "", length: 5, attemptsLeft: 3, accessibilityUrl: "https://example.com/help",
+    submit: async (a) => a.toUpperCase() === "ACDEF" ? { ok: true, token: "tok" } : { ok: false, attemptsLeft: 2 },
+  }).then(t => window.result = "token:" + t, e => window.result = "error:" + e.message);
+</script></body></html>`);
+  }
   if (url.pathname === "/result") {
     const r = results.get(url.searchParams.get("run"));
     res.writeHead(r ? 200 : 404, { "Content-Type": "application/json" });

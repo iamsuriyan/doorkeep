@@ -106,10 +106,11 @@ type siteConfig struct {
 	InteractiveActions []string                   `json:"interactive_actions"`
 	StrictIP           bool                       `json:"strict_ip"`
 	Actions            map[string]store.ActionCfg `json:"actions,omitempty"`
+	AccessibilityURL   string                     `json:"accessibility_url,omitempty"`
 }
 
 func (db *DB) CreateSite(ctx context.Context, s *store.Site) error {
-	cfg, _ := json.Marshal(siteConfig{s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions})
+	cfg, _ := json.Marshal(siteConfig{s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions, s.AccessibilityURL})
 	if s.CreatedAt.IsZero() {
 		s.CreatedAt = time.Now().UTC()
 	}
@@ -119,7 +120,7 @@ func (db *DB) CreateSite(ctx context.Context, s *store.Site) error {
 }
 
 func (db *DB) UpdateSite(ctx context.Context, s *store.Site) error {
-	cfg, _ := json.Marshal(siteConfig{s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions})
+	cfg, _ := json.Marshal(siteConfig{s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions, s.AccessibilityURL})
 	res, err := db.w.ExecContext(ctx, `UPDATE sites SET name=?, secret_hash=?, config=? WHERE id=?`, s.Name, s.SecretHash, string(cfg), s.ID)
 	if err != nil {
 		return err
@@ -151,7 +152,7 @@ func scanSite(row scanner) (*store.Site, error) {
 	if err := json.Unmarshal([]byte(cfgS), &cfg); err != nil {
 		return nil, err
 	}
-	s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions = cfg.Origins, cfg.Thresholds, cfg.Mode, cfg.InteractiveActions, cfg.StrictIP, cfg.Actions
+	s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions, s.AccessibilityURL = cfg.Origins, cfg.Thresholds, cfg.Mode, cfg.InteractiveActions, cfg.StrictIP, cfg.Actions, cfg.AccessibilityURL
 	if s.Mode == "" {
 		s.Mode = scoring.ModeEnforce
 	}

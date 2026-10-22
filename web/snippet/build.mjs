@@ -21,7 +21,11 @@ mkdirSync("dist", { recursive: true });
 await build({ ...common, format: "iife", outfile: "dist/dk.js" });
 await build({ ...common, format: "esm", outfile: "dist/dk.esm.js" });
 
+await build({ entryPoints: ["src/ui.ts"], bundle: true, minify: true, target: "es2020", format: "iife", outfile: "dist/dk-ui.js", legalComments: "none" });
+
 copyFileSync("dist/dk.js", "../../internal/api/assets/dk.js");
+copyFileSync("dist/dk-ui.js", "../../internal/api/assets/dk-ui.js");
+console.log(`dk-ui.js ${gzipSync(readFileSync("dist/dk-ui.js")).length} B gzip (loaded only for visual challenges)`);
 const gz = gzipSync(readFileSync("dist/dk.js")).length;
 console.log(`dk.js ${readFileSync("dist/dk.js").length} B, ${gz} B gzip`);
 if (gz > 14336) { console.error("snippet exceeds 14 KB gzip budget"); process.exit(1); }

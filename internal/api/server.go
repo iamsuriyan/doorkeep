@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iamsuriyan/doorkeep/internal/challenge/visual"
 	"github.com/iamsuriyan/doorkeep/internal/config"
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
@@ -32,16 +33,17 @@ var assets embed.FS
 
 // Server holds dependencies for the HTTP handlers.
 type Server struct {
-	Cfg   *config.Config
-	Store store.Store
-	Rules *rules.Set
-	Ring  *token.Ring
-	Keys  *pseudo.Keyer
-	IP    *ipintel.Store
-	Vel   *velocity.Tracker
-	Log   *slog.Logger
-	Now   func() time.Time
-	mux   *http.ServeMux
+	Cfg    *config.Config
+	Store  store.Store
+	Rules  *rules.Set
+	Ring   *token.Ring
+	Keys   *pseudo.Keyer
+	IP     *ipintel.Store
+	Vel    *velocity.Tracker
+	Visual *visual.Generator
+	Log    *slog.Logger
+	Now    func() time.Time
+	mux    *http.ServeMux
 }
 
 // New wires a server.
@@ -53,6 +55,7 @@ func New(cfg *config.Config, st store.Store, rs *rules.Set, log *slog.Logger) *S
 	s := &Server{Cfg: cfg, Store: st, Rules: rs, Ring: ring, Keys: pseudo.New(cfg.SecretBytes()), IP: &ipintel.Store{}, Log: log, Now: time.Now}
 	ring.Now = func() time.Time { return s.Now() }
 	s.Vel = velocity.New(func() time.Time { return s.Now() })
+	s.Visual = visual.New(cfg.SecretBytes())
 	s.routes()
 	return s
 }
@@ -64,6 +67,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/submit", s.cors(s.handleSubmit))
 	m.HandleFunc("POST /v1/challenge", s.cors(s.handleChallenge))
 	m.HandleFunc("OPTIONS /v1/", s.handlePreflight)
+	m.HandleFunc("GET /v1/challenge/visual.png", s.handleVisualPNG)
+	m.HandleFunc("GET /v1/challenge/audio.wav", s.handleVisualWAV)
+	m.HandleFunc("GET /v1/dk-ui.js", s.handleUI)
 	m.HandleFunc("POST /v1/siteverify", s.handleVerify)
 	m.HandleFunc("POST /v1/verify", s.handleVerify)
 	m.HandleFunc("POST /v1/report", s.handleReport)

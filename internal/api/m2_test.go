@@ -62,6 +62,10 @@ func (h *harness) submitFrom(ip string, run int) map[string]any {
 		body, _ := json.Marshal(map[string]any{"n": n, "kind": "pow", "sol": pow.Solve(n, params)})
 		_, out = h.post("/v1/challenge", string(body), hdr)
 	}
+	if out["status"] == "challenge" && out["kind"] == "visual" {
+		body, _ := json.Marshal(map[string]any{"n": n, "kind": "visual", "answer": h.srv.Visual.Answer(n)})
+		_, out = h.post("/v1/challenge", string(body), hdr)
+	}
 	tok, _ := out["token"].(string)
 	if tok == "" {
 		return map[string]any{"status": out["status"]}
