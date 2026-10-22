@@ -186,3 +186,15 @@ func (t *Tracker) Len() int {
 	defer t.mu.Unlock()
 	return len(t.m)
 }
+
+// Counter is implemented by Tracker (in-process) and Redis (shared across
+// cluster nodes).
+type Counter interface {
+	Add(key string, members ...string)
+	Count(key string, d time.Duration) int
+	Distinct(key string, d time.Duration, prefix string) int
+	IntervalCV(key string) float64
+	Len() int
+}
+
+var _ Counter = (*Tracker)(nil)

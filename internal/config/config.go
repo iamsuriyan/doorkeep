@@ -41,6 +41,12 @@ type Config struct {
 	TLSKey          string   `yaml:"tls_key"`
 	AutocertDomains []string `yaml:"autocert_domains"`
 	AutocertEmail   string   `yaml:"autocert_email"`
+	// Cluster: several doorkeep nodes share Postgres (state) and Redis
+	// (velocity). Both secrets must then be configured explicitly.
+	DatabaseURL string `yaml:"database_url"`
+	RedisURL    string `yaml:"redis_url"`
+
+	secretGenerated, tokenGenerated bool
 
 	trusted []netip.Prefix
 }
@@ -86,6 +92,8 @@ func Load(path string) (*Config, error) {
 	env("DOORKEEP_PUBLIC_URL", &c.PublicURL)
 	env("DOORKEEP_SECRET", &c.Secret)
 	env("DOORKEEP_LOG_LEVEL", &c.LogLevel)
+	env("DOORKEEP_DATABASE_URL", &c.DatabaseURL)
+	env("DOORKEEP_REDIS_URL", &c.RedisURL)
 	env("DOORKEEP_TLS_CERT", &c.TLSCert)
 	env("DOORKEEP_TLS_KEY", &c.TLSKey)
 	env("DOORKEEP_AUTOCERT_EMAIL", &c.AutocertEmail)
@@ -113,14 +121,14 @@ func Load(path string) (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.Secret = s
+		c.Secret, c.secretGenerated = s, true
 	}
 	if len(c.TokenKeys) == 0 {
 		s, err := persisted(filepath.Join(c.DataDir, "token.key"))
 		if err != nil {
 			return nil, err
 		}
-		c.TokenKeys = []TokenKey{{ID: "k1", Key: s}}
+		c.TokenKeys, c.tokenGenerated = []TokenKey{{ID: "k1", Key: s}}, true
 	}
 	return &c, c.validate()
 }
@@ -150,6 +158,12 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: trusted proxy %q: %w", p, err)
 		}
 		c.trusted = append(c.trusted, pf.Masked())
+	}
+	if c.DatabaseURL != "" && (c.secretGenerated || c.tokenGenerated) {
+		return errors.New("config: with database_url (cluster mode) set DOORKEEP_SECRET and DOORKEEP_TOKEN_KEY explicitly, identical on every node")
+	}
+	if c.RedisURL != "" && c.DatabaseURL == "" {
+		return errors.New("config: redis_url needs database_url (both are for cluster mode)")
 	}
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("config: tls_cert and tls_key must be set together")

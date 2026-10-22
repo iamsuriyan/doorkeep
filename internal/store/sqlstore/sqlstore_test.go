@@ -1,9 +1,12 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,8 +17,31 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/store"
 )
 
+// open returns the store under test: SQLite by default, Postgres when
+// DK_TEST_POSTGRES holds a DSN (each test gets a fresh schema).
 func open(t *testing.T) *DB {
 	t.Helper()
+	if dsn := os.Getenv("DK_TEST_POSTGRES"); dsn != "" {
+		admin, err := sql.Open("pgx", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema := "t_" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "_"))
+		if _, err := admin.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE; CREATE SCHEMA " + schema); err != nil {
+			t.Fatal(err)
+		}
+		admin.Close()
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		db, err := OpenPostgres(dsn + sep + "search_path=" + schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return db
+	}
 	db, err := Open(filepath.Join(t.TempDir(), "dk.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -112,5 +138,48 @@ func TestEventRoundTrip(t *testing.T) {
 	}
 	if err := db.LabelEvent(ctx, "evt_1", "bot", "dashboard"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdminAndAuditAndLists(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	now := time.Now()
+	if err := db.CreateAdmin(ctx, "ops", "hash", now); err != nil {
+		t.Fatal(err)
+	}
+	if h, err := db.AdminPasswordHash(ctx, "ops"); err != nil || h != "hash" {
+		t.Fatalf("%q %v", h, err)
+	}
+	if err := db.CreateSession(ctx, &store.AdminSession{TokenHash: "th", User: "ops", CSRF: "c", ExpiresAt: now.Add(time.Hour)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := db.GetSession(ctx, "th", now); err != nil || s.User != "ops" {
+		t.Fatalf("%+v %v", s, err)
+	}
+	if _, err := db.GetSession(ctx, "th", now.Add(2*time.Hour)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("expired session returned")
+	}
+	if err := db.Audit(ctx, store.AuditEntry{TS: now, Actor: "user:ops", Action: "x", Target: "y", Detail: map[string]any{"a": 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := db.ListAudit(ctx, 10); len(l) != 1 || l[0].Detail["a"] != float64(1) {
+		t.Fatalf("%+v", l)
+	}
+	e := &store.ListEntry{SiteID: "s1", Kind: "cidr", Value: "10.0.0.0/8", Action: scoring.ListAllow}
+	if err := db.AddListEntry(ctx, e); err != nil || e.ID == 0 {
+		t.Fatalf("list id %d %v", e.ID, err)
+	}
+	if err := db.SaveModels(ctx, map[string][]byte{"hbos:s1": []byte(`{"x":1}`)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := db.LoadModels(ctx); string(m["hbos:s1"]) != `{"x":1}` {
+		t.Fatalf("%v", m)
+	}
+	if err := db.PutAggregate(ctx, "s1", store.Aggregate{Hour: now.Truncate(time.Hour), Data: map[string]any{"total": 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := db.Aggregates(ctx, "s1", now.Add(-2*time.Hour), now.Add(time.Hour)); len(a) != 1 {
+		t.Fatalf("%v", a)
 	}
 }

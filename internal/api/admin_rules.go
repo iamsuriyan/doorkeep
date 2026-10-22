@@ -12,19 +12,24 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/store"
 )
 
-// ruleCache holds each site's compiled effective rule set.
+// ruleCache holds each site's compiled effective rule set. Entries expire
+// after ruleCacheTTL so edits made on another cluster node take effect.
 type ruleCache struct {
 	mu   sync.RWMutex
 	sets map[string]*rules.Set
+	at   map[string]time.Time
 }
+
+const ruleCacheTTL = 30 * time.Second
 
 func (s *Server) siteRules(ctx context.Context, siteID string) *rules.Set {
 	s.rc.mu.RLock()
-	set := s.rc.sets[siteID]
+	set, at := s.rc.sets[siteID], s.rc.at[siteID]
 	s.rc.mu.RUnlock()
-	if set != nil {
+	if set != nil && time.Since(at) < ruleCacheTTL {
 		return set
 	}
+	set = nil
 	ov, err := s.overrides(ctx, siteID)
 	if err == nil && len(ov) > 0 {
 		if eff, err := rules.Effective(s.Rules, ov, "site"); err == nil {
@@ -38,6 +43,10 @@ func (s *Server) siteRules(ctx context.Context, siteID string) *rules.Set {
 	}
 	s.rc.mu.Lock()
 	s.rc.sets[siteID] = set
+	if s.rc.at == nil {
+		s.rc.at = map[string]time.Time{}
+	}
+	s.rc.at[siteID] = time.Now()
 	s.rc.mu.Unlock()
 	return set
 }

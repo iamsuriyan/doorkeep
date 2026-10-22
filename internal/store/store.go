@@ -1,6 +1,6 @@
 // Package store defines persistence for sites, events, lists and replay
-// tracking. Implementations live in store/sqlite (default) and
-// store/postgres (cluster). Raw signals are never stored (design section 6).
+// tracking. Implementations live in store/sqlstore (SQLite by default,
+// Postgres for clusters). Raw signals are never stored (design section 6).
 package store
 
 import (

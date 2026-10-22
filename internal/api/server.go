@@ -40,7 +40,7 @@ type Server struct {
 	Ring   *token.Ring
 	Keys   *pseudo.Keyer
 	IP     *ipintel.Store
-	Vel    *velocity.Tracker
+	Vel    velocity.Counter
 	Visual *visual.Generator
 	Models *model.Registry
 	rc     ruleCache

@@ -1,7 +1,12 @@
-// Package sqlite is the default single-binary store, using the CGO-free
-// modernc.org/sqlite driver in WAL mode. All writes go through one
-// connection so nonce transitions are serialised; reads use a separate pool.
-package sqlite
+// Package sqlstore implements store.Store on SQL databases.
+//
+//   - SQLite (default, single binary): CGO-free modernc.org/sqlite in WAL
+//     mode. All writes go through one connection, so nonce transitions are
+//     serialised; reads use a separate pool.
+//   - Postgres (cluster): pgx; nonce and replay transitions take row locks
+//     (SELECT ... FOR UPDATE) so several doorkeep nodes can share one
+//     database safely.
+package sqlstore
 
 import (
 	"context"
@@ -12,9 +17,12 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
@@ -23,13 +31,48 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/store"
 )
 
-//go:embed migrations/*.sql
+//go:embed migrations
 var migrations embed.FS
+
+// Dialect selects SQL differences.
+type Dialect int
+
+const (
+	SQLite Dialect = iota
+	Postgres
+)
 
 // DB implements store.Store.
 type DB struct {
-	w *sql.DB // single writer connection
-	r *sql.DB // reader pool
+	w       *sql.DB // single writer connection (SQLite) or the pool (Postgres)
+	r       *sql.DB // reader pool
+	dialect Dialect
+}
+
+// q rebinds ? placeholders to $n for Postgres.
+func (db *DB) q(query string) string {
+	if db.dialect != Postgres {
+		return query
+	}
+	var b strings.Builder
+	n := 0
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			n++
+			b.WriteString("$" + strconv.Itoa(n))
+			continue
+		}
+		b.WriteByte(query[i])
+	}
+	return b.String()
+}
+
+// lock returns the row-lock suffix for read-modify-write transactions.
+func (db *DB) lock() string {
+	if db.dialect == Postgres {
+		return " FOR UPDATE"
+	}
+	return "" // SQLite serialises writers (single connection, BEGIN IMMEDIATE)
 }
 
 var _ store.Store = (*DB)(nil)
@@ -72,13 +115,37 @@ func OpenMemory(name string) (*DB, error) {
 	return db, nil
 }
 
+// OpenPostgres connects to Postgres (pgx) and runs migrations.
+func OpenPostgres(dsn string) (*DB, error) {
+	pool, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, err
+	}
+	pool.SetMaxOpenConns(20)
+	pool.SetConnMaxIdleTime(5 * time.Minute)
+	db := &DB{w: pool, r: pool, dialect: Postgres}
+	if err := db.migrate(); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+var migrateMu sync.Mutex
+
 func (db *DB) migrate() error {
+	migrateMu.Lock() // goose keeps global state
+	defer migrateMu.Unlock()
 	goose.SetBaseFS(migrations)
 	goose.SetLogger(goose.NopLogger())
-	if err := goose.SetDialect("sqlite3"); err != nil {
+	dialect, dir := "sqlite3", "migrations/sqlite"
+	if db.dialect == Postgres {
+		dialect, dir = "postgres", "migrations/postgres"
+	}
+	if err := goose.SetDialect(dialect); err != nil {
 		return err
 	}
-	return goose.Up(db.w, "migrations")
+	return goose.Up(db.w, dir)
 }
 
 // Close closes both pools.
@@ -114,14 +181,14 @@ func (db *DB) CreateSite(ctx context.Context, s *store.Site) error {
 	if s.CreatedAt.IsZero() {
 		s.CreatedAt = time.Now().UTC()
 	}
-	_, err := db.w.ExecContext(ctx, `INSERT INTO sites(id,name,site_key,secret_hash,config,created_at) VALUES(?,?,?,?,?,?)`,
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO sites(id,name,site_key,secret_hash,config,created_at) VALUES(?,?,?,?,?,?)`),
 		s.ID, s.Name, s.SiteKey, s.SecretHash, string(cfg), ms(s.CreatedAt))
 	return err
 }
 
 func (db *DB) UpdateSite(ctx context.Context, s *store.Site) error {
 	cfg, _ := json.Marshal(siteConfig{s.Origins, s.Thresholds, s.Mode, s.InteractiveActions, s.StrictIP, s.Actions, s.AccessibilityURL})
-	res, err := db.w.ExecContext(ctx, `UPDATE sites SET name=?, secret_hash=?, config=? WHERE id=?`, s.Name, s.SecretHash, string(cfg), s.ID)
+	res, err := db.w.ExecContext(ctx, db.q(`UPDATE sites SET name=?, secret_hash=?, config=? WHERE id=?`), s.Name, s.SecretHash, string(cfg), s.ID)
 	if err != nil {
 		return err
 	}
@@ -132,7 +199,7 @@ func (db *DB) UpdateSite(ctx context.Context, s *store.Site) error {
 }
 
 func (db *DB) siteWhere(ctx context.Context, where string, arg any) (*store.Site, error) {
-	row := db.r.QueryRowContext(ctx, `SELECT id,name,site_key,secret_hash,config,created_at FROM sites WHERE `+where, arg)
+	row := db.r.QueryRowContext(ctx, db.q(`SELECT id,name,site_key,secret_hash,config,created_at FROM sites WHERE `+where), arg)
 	return scanSite(row)
 }
 
@@ -171,7 +238,7 @@ func (db *DB) SiteByID(ctx context.Context, id string) (*store.Site, error) {
 }
 
 func (db *DB) ListSites(ctx context.Context) ([]*store.Site, error) {
-	rows, err := db.r.QueryContext(ctx, `SELECT id,name,site_key,secret_hash,config,created_at FROM sites ORDER BY created_at`)
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT id,name,site_key,secret_hash,config,created_at FROM sites ORDER BY created_at`))
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +259,7 @@ func (db *DB) ListSites(ctx context.Context) ([]*store.Site, error) {
 const nonceCols = `id,site_id,origin,action,seed,issued_at,expires_at,state,ip_hash,ua_hash,pow_salt,pow_bits,pow_n,answer_mac,attempts,event_id,risk,floor`
 
 func (db *DB) Create(ctx context.Context, n *nonce.Nonce) error {
-	_, err := db.w.ExecContext(ctx, `INSERT INTO nonces(`+nonceCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO nonces(`+nonceCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		n.ID, n.SiteID, n.Origin, n.Action, n.Seed, ms(n.IssuedAt), ms(n.ExpiresAt), string(n.State),
 		n.IPHash, n.UAHash, n.PoWSalt, n.PoWBits, n.PoWN, n.AnswerMAC, n.Attempts, n.EventID, n.Risk, n.Floor)
 	return err
@@ -215,7 +282,7 @@ func scanNonce(row scanner) (*nonce.Nonce, error) {
 }
 
 func (db *DB) Get(ctx context.Context, id string) (*nonce.Nonce, error) {
-	return scanNonce(db.w.QueryRowContext(ctx, `SELECT `+nonceCols+` FROM nonces WHERE id=?`, id))
+	return scanNonce(db.w.QueryRowContext(ctx, db.q(`SELECT `+nonceCols+` FROM nonces WHERE id=?`), id))
 }
 
 func (db *DB) Transition(ctx context.Context, id string, from []nonce.State, to nonce.State, now time.Time, mutate func(*nonce.Nonce)) (*nonce.Nonce, error) {
@@ -224,7 +291,7 @@ func (db *DB) Transition(ctx context.Context, id string, from []nonce.State, to 
 		return nil, err
 	}
 	defer tx.Rollback()
-	n, err := scanNonce(tx.QueryRowContext(ctx, `SELECT `+nonceCols+` FROM nonces WHERE id=?`, id))
+	n, err := scanNonce(tx.QueryRowContext(ctx, db.q(`SELECT `+nonceCols+` FROM nonces WHERE id=?`+db.lock()), id))
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +302,7 @@ func (db *DB) Transition(ctx context.Context, id string, from []nonce.State, to 
 	if mutate != nil {
 		mutate(n)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE nonces SET state=?, expires_at=?, pow_salt=?, pow_bits=?, pow_n=?, answer_mac=?, attempts=?, event_id=?, risk=?, floor=? WHERE id=?`,
+	_, err = tx.ExecContext(ctx, db.q(`UPDATE nonces SET state=?, expires_at=?, pow_salt=?, pow_bits=?, pow_n=?, answer_mac=?, attempts=?, event_id=?, risk=?, floor=? WHERE id=?`),
 		string(n.State), ms(n.ExpiresAt), n.PoWSalt, n.PoWBits, n.PoWN, n.AnswerMAC, n.Attempts, n.EventID, n.Risk, n.Floor, n.ID)
 	if err != nil {
 		return nil, err
@@ -247,7 +314,7 @@ func (db *DB) Transition(ctx context.Context, id string, from []nonce.State, to 
 }
 
 func (db *DB) PurgeExpired(ctx context.Context, before time.Time) (int64, error) {
-	res, err := db.w.ExecContext(ctx, `DELETE FROM nonces WHERE expires_at < ?`, ms(before))
+	res, err := db.w.ExecContext(ctx, db.q(`DELETE FROM nonces WHERE expires_at < ?`), ms(before))
 	if err != nil {
 		return 0, err
 	}
@@ -277,8 +344,8 @@ func (db *DB) InsertEvent(ctx context.Context, e *store.Event) error {
 	if e.ChallengeOK != nil {
 		chOK = boolInt(*e.ChallengeOK)
 	}
-	_, err := db.w.ExecContext(ctx, `INSERT INTO events(id,site_id,ts,action,risk,outcome,would_be,reasons,shadow,shadow_risk,features,fp_hash,ip24_hash,asn,asn_class,country,ua_family,ua_major,os_family,challenge_kind,challenge_ok)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO events(id,site_id,ts,action,risk,outcome,would_be,reasons,shadow,shadow_risk,features,fp_hash,ip24_hash,asn,asn_class,country,ua_family,ua_major,os_family,challenge_kind,challenge_ok)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		e.ID, e.SiteID, ms(e.TS), e.Action, e.Risk, string(e.Outcome), string(e.WouldBe), string(reasons), string(shadow), e.ShadowRisk,
 		string(feats), e.FPHash, e.IP24Hash, e.ASN, e.ASNClass, e.Country, e.UAFamily, e.UAMajor, e.OSFamily, e.ChallengeKind, chOK)
 	return err
@@ -300,13 +367,13 @@ func boolInt(b bool) int {
 
 func (db *DB) UpdateEventChallenge(ctx context.Context, id, kind string, ok bool, risk int, outcome scoring.Outcome, reasons []scoring.Reason) error {
 	rj, _ := json.Marshal(nz(reasons))
-	_, err := db.w.ExecContext(ctx, `UPDATE events SET challenge_kind=?, challenge_ok=?, risk=?, outcome=?, reasons=? WHERE id=?`,
+	_, err := db.w.ExecContext(ctx, db.q(`UPDATE events SET challenge_kind=?, challenge_ok=?, risk=?, outcome=?, reasons=? WHERE id=?`),
 		kind, boolInt(ok), risk, string(outcome), string(rj), id)
 	return err
 }
 
 func (db *DB) MarkEventVerified(ctx context.Context, id string, at time.Time) error {
-	_, err := db.w.ExecContext(ctx, `UPDATE events SET verified_at=? WHERE id=?`, ms(at), id)
+	_, err := db.w.ExecContext(ctx, db.q(`UPDATE events SET verified_at=? WHERE id=?`), ms(at), id)
 	return err
 }
 
@@ -314,7 +381,7 @@ func (db *DB) LabelEvent(ctx context.Context, id, label, source string) error {
 	if label != "bot" && label != "human" && label != "" {
 		return fmt.Errorf("store: invalid label %q", label)
 	}
-	res, err := db.w.ExecContext(ctx, `UPDATE events SET label=?, label_source=? WHERE id=?`, label, source, id)
+	res, err := db.w.ExecContext(ctx, db.q(`UPDATE events SET label=?, label_source=? WHERE id=?`), label, source, id)
 	if err != nil {
 		return err
 	}
@@ -357,7 +424,7 @@ func scanEvent(row scanner) (*store.Event, error) {
 }
 
 func (db *DB) GetEvent(ctx context.Context, id string) (*store.Event, error) {
-	return scanEvent(db.r.QueryRowContext(ctx, `SELECT `+eventCols+` FROM events WHERE id=?`, id))
+	return scanEvent(db.r.QueryRowContext(ctx, db.q(`SELECT `+eventCols+` FROM events WHERE id=?`), id))
 }
 
 func eventWhere(f store.EventFilter) (string, []any) {
@@ -401,7 +468,7 @@ func (db *DB) ListEvents(ctx context.Context, f store.EventFilter) ([]*store.Eve
 		limit = 100
 	}
 	q += fmt.Sprintf(" ORDER BY ts DESC LIMIT %d", limit)
-	rows, err := db.r.QueryContext(ctx, q, args...)
+	rows, err := db.r.QueryContext(ctx, db.q(q), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -418,12 +485,12 @@ func (db *DB) ListEvents(ctx context.Context, f store.EventFilter) ([]*store.Eve
 }
 
 func (db *DB) DeleteEvent(ctx context.Context, id string) error {
-	_, err := db.w.ExecContext(ctx, `DELETE FROM events WHERE id=?`, id)
+	_, err := db.w.ExecContext(ctx, db.q(`DELETE FROM events WHERE id=?`), id)
 	return err
 }
 
 func (db *DB) PurgeEvents(ctx context.Context, before time.Time) (int64, error) {
-	res, err := db.w.ExecContext(ctx, `DELETE FROM events WHERE ts < ?`, ms(before))
+	res, err := db.w.ExecContext(ctx, db.q(`DELETE FROM events WHERE ts < ?`), ms(before))
 	if err != nil {
 		return 0, err
 	}
@@ -443,7 +510,7 @@ func (db *DB) CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash strin
 	defer tx.Rollback()
 	var prevSeed string
 	var seenAt int64
-	err = tx.QueryRowContext(ctx, `SELECT seed_hash, seen_at FROM canvas_seen WHERE site_id=? AND canvas_hash=?`, siteID, canvasHash).Scan(&prevSeed, &seenAt)
+	err = tx.QueryRowContext(ctx, db.q(`SELECT seed_hash, seen_at FROM canvas_seen WHERE site_id=? AND canvas_hash=?`+db.lock()), siteID, canvasHash).Scan(&prevSeed, &seenAt)
 	conflict := false
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -452,8 +519,8 @@ func (db *DB) CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash strin
 	default:
 		conflict = prevSeed != seedHash && now.Sub(fromMS(seenAt)) < window
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO canvas_seen(site_id,canvas_hash,seed_hash,seen_at) VALUES(?,?,?,?)
-		ON CONFLICT(site_id,canvas_hash) DO UPDATE SET seed_hash=excluded.seed_hash, seen_at=excluded.seen_at`,
+	_, err = tx.ExecContext(ctx, db.q(`INSERT INTO canvas_seen(site_id,canvas_hash,seed_hash,seen_at) VALUES(?,?,?,?)
+		ON CONFLICT(site_id,canvas_hash) DO UPDATE SET seed_hash=excluded.seed_hash, seen_at=excluded.seen_at`),
 		siteID, canvasHash, seedHash, ms(now))
 	if err != nil {
 		return false, err
@@ -464,7 +531,7 @@ func (db *DB) CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash strin
 // ---------------- lists ----------------
 
 func (db *DB) ListEntries(ctx context.Context, siteID string, now time.Time) ([]store.ListEntry, error) {
-	rows, err := db.r.QueryContext(ctx, `SELECT id,site_id,kind,value,action,note,expires_at FROM lists WHERE site_id=? AND (expires_at IS NULL OR expires_at > ?) ORDER BY id`, siteID, ms(now))
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT id,site_id,kind,value,action,note,expires_at FROM lists WHERE site_id=? AND (expires_at IS NULL OR expires_at > ?) ORDER BY id`), siteID, ms(now))
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +559,11 @@ func (db *DB) AddListEntry(ctx context.Context, e *store.ListEntry) error {
 	if e.ExpiresAt != nil {
 		exp = ms(*e.ExpiresAt)
 	}
-	res, err := db.w.ExecContext(ctx, `INSERT INTO lists(site_id,kind,value,action,note,expires_at) VALUES(?,?,?,?,?,?)`,
+	if db.dialect == Postgres {
+		return db.w.QueryRowContext(ctx, db.q(`INSERT INTO lists(site_id,kind,value,action,note,expires_at) VALUES(?,?,?,?,?,?) RETURNING id`),
+			e.SiteID, e.Kind, e.Value, string(e.Action), e.Note, exp).Scan(&e.ID)
+	}
+	res, err := db.w.ExecContext(ctx, db.q(`INSERT INTO lists(site_id,kind,value,action,note,expires_at) VALUES(?,?,?,?,?,?)`),
 		e.SiteID, e.Kind, e.Value, string(e.Action), e.Note, exp)
 	if err != nil {
 		return err
@@ -502,7 +573,7 @@ func (db *DB) AddListEntry(ctx context.Context, e *store.ListEntry) error {
 }
 
 func (db *DB) DeleteListEntry(ctx context.Context, siteID string, id int64) error {
-	_, err := db.w.ExecContext(ctx, `DELETE FROM lists WHERE site_id=? AND id=?`, siteID, id)
+	_, err := db.w.ExecContext(ctx, db.q(`DELETE FROM lists WHERE site_id=? AND id=?`), siteID, id)
 	return err
 }
 
@@ -515,8 +586,8 @@ func (db *DB) SaveModels(ctx context.Context, snap map[string][]byte, now time.T
 	}
 	defer tx.Rollback()
 	for k, b := range snap {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO model_state(key,blob,updated_at) VALUES(?,?,?)
-			ON CONFLICT(key) DO UPDATE SET blob=excluded.blob, updated_at=excluded.updated_at`, k, b, ms(now)); err != nil {
+		if _, err := tx.ExecContext(ctx, db.q(`INSERT INTO model_state(key,blob,updated_at) VALUES(?,?,?)
+			ON CONFLICT(key) DO UPDATE SET blob=excluded.blob, updated_at=excluded.updated_at`), k, b, ms(now)); err != nil {
 			return err
 		}
 	}
@@ -524,7 +595,7 @@ func (db *DB) SaveModels(ctx context.Context, snap map[string][]byte, now time.T
 }
 
 func (db *DB) LoadModels(ctx context.Context) (map[string][]byte, error) {
-	rows, err := db.r.QueryContext(ctx, `SELECT key, blob FROM model_state`)
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT key, blob FROM model_state`))
 	if err != nil {
 		return nil, err
 	}
@@ -544,14 +615,14 @@ func (db *DB) LoadModels(ctx context.Context) (map[string][]byte, error) {
 // ---------------- admin ----------------
 
 func (db *DB) CreateAdmin(ctx context.Context, name, hash string, now time.Time) error {
-	_, err := db.w.ExecContext(ctx, `INSERT INTO admin_users(name,password_hash,created_at) VALUES(?,?,?)
-		ON CONFLICT(name) DO UPDATE SET password_hash=excluded.password_hash`, name, hash, ms(now))
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO admin_users(name,password_hash,created_at) VALUES(?,?,?)
+		ON CONFLICT(name) DO UPDATE SET password_hash=excluded.password_hash`), name, hash, ms(now))
 	return err
 }
 
 func (db *DB) AdminPasswordHash(ctx context.Context, name string) (string, error) {
 	var h string
-	err := db.r.QueryRowContext(ctx, `SELECT password_hash FROM admin_users WHERE name=?`, name).Scan(&h)
+	err := db.r.QueryRowContext(ctx, db.q(`SELECT password_hash FROM admin_users WHERE name=?`), name).Scan(&h)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", store.ErrNotFound
 	}
@@ -559,7 +630,7 @@ func (db *DB) AdminPasswordHash(ctx context.Context, name string) (string, error
 }
 
 func (db *DB) ListAdmins(ctx context.Context) ([]string, error) {
-	rows, err := db.r.QueryContext(ctx, `SELECT name FROM admin_users ORDER BY name`)
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT name FROM admin_users ORDER BY name`))
 	if err != nil {
 		return nil, err
 	}
@@ -576,8 +647,8 @@ func (db *DB) ListAdmins(ctx context.Context) ([]string, error) {
 }
 
 func (db *DB) CreateSession(ctx context.Context, s *store.AdminSession, now time.Time) error {
-	_, _ = db.w.ExecContext(ctx, `DELETE FROM admin_sessions WHERE expires_at < ?`, ms(now))
-	_, err := db.w.ExecContext(ctx, `INSERT INTO admin_sessions(token_hash,user,csrf,created_at,expires_at) VALUES(?,?,?,?,?)`,
+	_, _ = db.w.ExecContext(ctx, db.q(`DELETE FROM admin_sessions WHERE expires_at < ?`), ms(now))
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO admin_sessions(token_hash,username,csrf,created_at,expires_at) VALUES(?,?,?,?,?)`),
 		s.TokenHash, s.User, s.CSRF, ms(now), ms(s.ExpiresAt))
 	return err
 }
@@ -585,7 +656,7 @@ func (db *DB) CreateSession(ctx context.Context, s *store.AdminSession, now time
 func (db *DB) GetSession(ctx context.Context, tokenHash string, now time.Time) (*store.AdminSession, error) {
 	var s store.AdminSession
 	var exp int64
-	err := db.r.QueryRowContext(ctx, `SELECT token_hash,user,csrf,expires_at FROM admin_sessions WHERE token_hash=? AND expires_at > ?`, tokenHash, ms(now)).
+	err := db.r.QueryRowContext(ctx, db.q(`SELECT token_hash,username,csrf,expires_at FROM admin_sessions WHERE token_hash=? AND expires_at > ?`), tokenHash, ms(now)).
 		Scan(&s.TokenHash, &s.User, &s.CSRF, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
@@ -598,18 +669,18 @@ func (db *DB) GetSession(ctx context.Context, tokenHash string, now time.Time) (
 }
 
 func (db *DB) DeleteSession(ctx context.Context, tokenHash string) error {
-	_, err := db.w.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash=?`, tokenHash)
+	_, err := db.w.ExecContext(ctx, db.q(`DELETE FROM admin_sessions WHERE token_hash=?`), tokenHash)
 	return err
 }
 
 func (db *DB) CreateAdminToken(ctx context.Context, tokenHash, name string, now time.Time) error {
-	_, err := db.w.ExecContext(ctx, `INSERT INTO admin_tokens(token_hash,name,created_at) VALUES(?,?,?)`, tokenHash, name, ms(now))
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO admin_tokens(token_hash,name,created_at) VALUES(?,?,?)`), tokenHash, name, ms(now))
 	return err
 }
 
 func (db *DB) AdminTokenName(ctx context.Context, tokenHash string) (string, error) {
 	var n string
-	err := db.r.QueryRowContext(ctx, `SELECT name FROM admin_tokens WHERE token_hash=?`, tokenHash).Scan(&n)
+	err := db.r.QueryRowContext(ctx, db.q(`SELECT name FROM admin_tokens WHERE token_hash=?`), tokenHash).Scan(&n)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", store.ErrNotFound
 	}
@@ -621,7 +692,7 @@ func (db *DB) Audit(ctx context.Context, e store.AuditEntry) error {
 	if e.TS.IsZero() {
 		e.TS = time.Now()
 	}
-	_, err := db.w.ExecContext(ctx, `INSERT INTO audit_log(ts,actor,action,target,detail) VALUES(?,?,?,?,?)`, ms(e.TS), e.Actor, e.Action, e.Target, string(d))
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO audit_log(ts,actor,action,target,detail) VALUES(?,?,?,?,?)`), ms(e.TS), e.Actor, e.Action, e.Target, string(d))
 	return err
 }
 
@@ -629,7 +700,7 @@ func (db *DB) ListAudit(ctx context.Context, limit int) ([]store.AuditEntry, err
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := db.r.QueryContext(ctx, `SELECT id,ts,actor,action,target,detail FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT id,ts,actor,action,target,detail FROM audit_log ORDER BY id DESC LIMIT ?`), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +721,7 @@ func (db *DB) ListAudit(ctx context.Context, limit int) ([]store.AuditEntry, err
 }
 
 func (db *DB) SiteRules(ctx context.Context, siteID string) ([]store.SiteRule, error) {
-	rows, err := db.r.QueryContext(ctx, `SELECT site_id,rule_id,spec,updated_at FROM site_rules WHERE site_id=? ORDER BY rule_id`, siteID)
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT site_id,rule_id,spec,updated_at FROM site_rules WHERE site_id=? ORDER BY rule_id`), siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -670,26 +741,26 @@ func (db *DB) SiteRules(ctx context.Context, siteID string) ([]store.SiteRule, e
 }
 
 func (db *DB) PutSiteRule(ctx context.Context, r store.SiteRule) error {
-	_, err := db.w.ExecContext(ctx, `INSERT INTO site_rules(site_id,rule_id,spec,updated_at) VALUES(?,?,?,?)
-		ON CONFLICT(site_id,rule_id) DO UPDATE SET spec=excluded.spec, updated_at=excluded.updated_at`,
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO site_rules(site_id,rule_id,spec,updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(site_id,rule_id) DO UPDATE SET spec=excluded.spec, updated_at=excluded.updated_at`),
 		r.SiteID, r.RuleID, string(r.Spec), ms(r.UpdatedAt))
 	return err
 }
 
 func (db *DB) DeleteSiteRule(ctx context.Context, siteID, ruleID string) error {
-	_, err := db.w.ExecContext(ctx, `DELETE FROM site_rules WHERE site_id=? AND rule_id=?`, siteID, ruleID)
+	_, err := db.w.ExecContext(ctx, db.q(`DELETE FROM site_rules WHERE site_id=? AND rule_id=?`), siteID, ruleID)
 	return err
 }
 
 func (db *DB) PutAggregate(ctx context.Context, siteID string, a store.Aggregate) error {
 	d, _ := json.Marshal(a.Data)
-	_, err := db.w.ExecContext(ctx, `INSERT INTO aggregates_hourly(site_id,hour,data) VALUES(?,?,?)
-		ON CONFLICT(site_id,hour) DO UPDATE SET data=excluded.data`, siteID, a.Hour.Unix(), string(d))
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO aggregates_hourly(site_id,hour,data) VALUES(?,?,?)
+		ON CONFLICT(site_id,hour) DO UPDATE SET data=excluded.data`), siteID, a.Hour.Unix(), string(d))
 	return err
 }
 
 func (db *DB) Aggregates(ctx context.Context, siteID string, since, until time.Time) ([]store.Aggregate, error) {
-	rows, err := db.r.QueryContext(ctx, `SELECT hour,data FROM aggregates_hourly WHERE site_id=? AND hour>=? AND hour<? ORDER BY hour`, siteID, since.Unix(), until.Unix())
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT hour,data FROM aggregates_hourly WHERE site_id=? AND hour>=? AND hour<? ORDER BY hour`), siteID, since.Unix(), until.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +781,7 @@ func (db *DB) Aggregates(ctx context.Context, siteID string, since, until time.T
 
 func (db *DB) StreamEvents(ctx context.Context, f store.EventFilter, fn func(*store.Event) error) error {
 	w, args := eventWhere(f)
-	rows, err := db.r.QueryContext(ctx, `SELECT `+eventCols+` FROM events`+w+` ORDER BY ts`, args...)
+	rows, err := db.r.QueryContext(ctx, db.q(`SELECT `+eventCols+` FROM events`+w+` ORDER BY ts`), args...)
 	if err != nil {
 		return err
 	}

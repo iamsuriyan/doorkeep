@@ -7,7 +7,7 @@ CREATE TABLE admin_users (
 
 CREATE TABLE admin_sessions (
   token_hash TEXT PRIMARY KEY,          -- SHA-256 of the cookie value
-  user       TEXT NOT NULL,
+  username   TEXT NOT NULL,
   csrf       TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL

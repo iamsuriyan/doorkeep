@@ -35,8 +35,9 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
 	"github.com/iamsuriyan/doorkeep/internal/signals/ipintel"
+	"github.com/iamsuriyan/doorkeep/internal/signals/velocity"
 	"github.com/iamsuriyan/doorkeep/internal/store"
-	"github.com/iamsuriyan/doorkeep/internal/store/sqlite"
+	"github.com/iamsuriyan/doorkeep/internal/store/sqlstore"
 )
 
 var version = "dev"
@@ -90,7 +91,11 @@ Secrets are generated on first run and stored in the data directory.
 `)
 }
 
-func load(fs *flag.FlagSet, args []string) (*config.Config, *sqlite.DB, error) {
+func load(fs *flag.FlagSet, args []string) (*config.Config, *sqlstore.DB, error) {
+	return loadWith(fs, args)
+}
+
+func loadWith(fs *flag.FlagSet, args []string) (*config.Config, *sqlstore.DB, error) {
 	cfgPath := fs.String("config", os.Getenv("DOORKEEP_CONFIG"), "path to config YAML")
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, err
@@ -99,7 +104,12 @@ func load(fs *flag.FlagSet, args []string) (*config.Config, *sqlite.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := sqlite.Open(filepath.Join(cfg.DataDir, "doorkeep.db"))
+	var db *sqlstore.DB
+	if cfg.DatabaseURL != "" {
+		db, err = sqlstore.OpenPostgres(cfg.DatabaseURL)
+	} else {
+		db, err = sqlstore.Open(filepath.Join(cfg.DataDir, "doorkeep.db"))
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -125,6 +135,15 @@ func serve(args []string) error {
 		return err
 	}
 	srv := api.New(cfg, db, rs, log)
+	if cfg.RedisURL != "" {
+		rv, err := velocity.NewRedis(cfg.RedisURL, nil, log)
+		if err != nil {
+			return fmt.Errorf("redis: %w", err)
+		}
+		defer rv.Close()
+		srv.Vel = rv
+		log.Info("cluster mode", "store", "postgres", "velocity", "redis")
+	}
 	loadIPData(srv.IP, cfg, log)
 	if snap, err := db.LoadModels(context.Background()); err == nil && len(snap) > 0 {
 		if err := srv.Models.Restore(snap); err != nil {

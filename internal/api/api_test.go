@@ -19,7 +19,7 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/scoring/rules"
 	"github.com/iamsuriyan/doorkeep/internal/signals/payload"
 	"github.com/iamsuriyan/doorkeep/internal/store"
-	"github.com/iamsuriyan/doorkeep/internal/store/sqlite"
+	"github.com/iamsuriyan/doorkeep/internal/store/sqlstore"
 )
 
 const (
@@ -42,7 +42,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sqlite.Open(cfg.DataDir + "/dk.db")
+	db, err := sqlstore.Open(cfg.DataDir + "/dk.db")
 	if err != nil {
 		t.Fatal(err)
 	}
