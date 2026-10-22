@@ -1,6 +1,6 @@
 // Builds doorkeep, creates a site, starts doorkeep and the fixture site.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,12 +32,20 @@ export default async function setup() {
   const secret = /secret[^:]*:\s*(\S+)/.exec(out)![1];
 
   execFileSync(join(ROOT, "bin/doorkeep"), ["admin", "create", "--user", "ops"], { env: dkEnv, input: "correct horse battery staple\n" });
+  const nextOut = execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", "nextjs", "--origin", "http://localhost:18185"], { env: dkEnv }).toString();
+  const nextKey = /site key[^:]*:\s*(\S+)/.exec(nextOut)![1];
+  const nextSecret = /secret[^:]*:\s*(\S+)/.exec(nextOut)![1];
   // Sites behind the real nginx and Caddy edge proxies (edge.spec.ts).
   for (const port of [18183, 18184]) {
     execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", `edge-${port}`, "--origin", `http://localhost:${port}`], { env: dkEnv });
   }
 
   const procs: ChildProcess[] = [];
+  const groups: number[] = [];
+  // Free ports a crashed previous run may still hold.
+  for (const port of [DK_PORT, FIX_PORT, 18185]) {
+    try { execFileSync("sh", ["-c", `for p in $(ss -ltnp "sport = :${port}" | grep -o 'pid=[0-9]*' | cut -d= -f2); do kill $p; done`], { stdio: "ignore" }); } catch {}
+  }
   procs.push(spawn(join(ROOT, "bin/doorkeep"), ["serve"], { env: dkEnv, stdio: "inherit" }));
   await waitFor(`http://127.0.0.1:${DK_PORT}/healthz`);
   procs.push(spawn(process.execPath, [join(__dirname, "fixture/server.mjs")], {
@@ -46,6 +54,34 @@ export default async function setup() {
   }));
   await waitFor(`http://127.0.0.1:${FIX_PORT}/`);
   process.env.DK_DATA = data;
+
+  // The Next.js example (integrations/nextjs), built if needed.
+  const nextDir = join(ROOT, "examples/nextjs-signup");
+  const nextEnv = { ...env, DOORKEEP_URL: `http://127.0.0.1:${DK_PORT}`, DOORKEEP_SITE_KEY: nextKey, DOORKEEP_SECRET: nextSecret, PORT: "18185" };
+  try {
+    if (!existsSync(join(nextDir, ".next/BUILD_ID"))) execFileSync("npx", ["next", "build"], { cwd: nextDir, env: nextEnv, stdio: "ignore" });
+    // Own process group so teardown also stops the next-server child.
+    const nx = spawn("npx", ["next", "start", "-p", "18185", "-H", "127.0.0.1"], { cwd: nextDir, env: nextEnv, stdio: "ignore", detached: true });
+    groups.push(nx.pid!);
+    await waitFor("http://127.0.0.1:18185/", 60000);
+    process.env.DK_NEXT = "1";
+  } catch (e) {
+    console.warn("Next.js example unavailable:", String(e).slice(0, 120));
+  }
+
+  // WordPress with the plugin (opt-in: DK_WP=1; pulls images, slow).
+  let wp = false;
+  if (process.env.DK_WP === "1") {
+    try {
+      const o = execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", "wordpress", "--origin", "http://localhost:18186"], { env: dkEnv }).toString();
+      const k = /site key[^:]*:\s*(\S+)/.exec(o)![1], sec = /secret[^:]*:\s*(\S+)/.exec(o)![1];
+      execFileSync(join(ROOT, "testing/wordpress/up.sh"), [k, sec], { stdio: "inherit" });
+      process.env.DK_WP_READY = "1";
+      wp = true;
+    } catch (e) {
+      console.warn("WordPress unavailable:", String(e).slice(0, 160));
+    }
+  }
 
   // Real nginx and Caddy in front of doorkeep, if Docker is available.
   const edge = join(__dirname, "edge");
@@ -69,8 +105,14 @@ export default async function setup() {
   }
 
   return async () => {
+    if (wp) {
+      try { execFileSync(join(ROOT, "testing/wordpress/down.sh"), { stdio: "ignore" }); } catch {}
+    }
     for (const c of containers) {
       try { execFileSync("docker", ["rm", "-f", c], { stdio: "ignore" }); } catch {}
+    }
+    for (const g of groups) {
+      try { process.kill(-g, "SIGTERM"); } catch {}
     }
     procs.forEach((p) => p.kill("SIGTERM"));
     rmSync(data, { recursive: true, force: true });

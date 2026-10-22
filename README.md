@@ -91,7 +91,7 @@ doorkeep.
 Pre-alpha. Done: the core scoring loop (M1); server-side signals: IP
 intelligence, velocity, JA4 and HTTP/2 fingerprints (M2); proof of work plus
 an accessible visual and audio challenge (M3); the learned model layer (M4);
-the admin API and dashboard (M5).
+the admin API and dashboard (M5); integrations and edge mode (M6).
 
 | Setup (measured end to end in real browsers) | Risk | Outcome |
 |---|---|---|
@@ -104,8 +104,15 @@ the admin API and dashboard (M5).
 | Real Chromium, no automation | 0 | allow |
 
 Known gaps are tracked in the open in
-[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next: integrations and
-edge mode (M6), then cluster support and release (M7).
+[testing/e2e/known_misses.yaml](testing/e2e/known_misses.yaml). Next: cluster support
+and release (M7).
+
+### Integrations
+
+Go, Node.js, Next.js, PHP and WordPress clients, plus edge mode for nginx,
+Caddy and Traefik (protect whole paths with the proxy's built-in auth
+sub-request; no modules). Next.js, WordPress, nginx and Caddy are tested end
+to end with real browsers. See [docs/integrations](docs/integrations).
 
 ### Challenges
 

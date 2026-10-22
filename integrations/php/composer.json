@@ -1,0 +1,8 @@
+{
+  "name": "doorkeep/verify",
+  "description": "Verify doorkeep tokens from a PHP backend",
+  "type": "library",
+  "license": "Apache-2.0",
+  "require": { "php": ">=8.1", "ext-json": "*" },
+  "autoload": { "psr-4": { "Doorkeep\\": "src/" } }
+}

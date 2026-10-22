@@ -28,3 +28,7 @@ ipdata.bin
 testing/e2e/test-results/
 testing/e2e/playwright-report/
 playwright/.cache/
+# Next.js example build
+examples/nextjs-signup/.next/
+examples/nextjs-signup/next-env.d.ts
+integrations/*/dist/

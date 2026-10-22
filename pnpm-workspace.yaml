@@ -1,4 +1,7 @@
 packages:
   - web/snippet
   - web/dashboard
+  - integrations/node
+  - integrations/nextjs
+  - examples/nextjs-signup
   - testing/e2e
