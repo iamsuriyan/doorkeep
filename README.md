@@ -78,13 +78,17 @@ doorkeep.
 
 ## Status
 
-Pre-alpha. Milestone 1 (core scoring loop) is done:
+Pre-alpha. Milestones 1 (core scoring loop) and 2 (server-side signals: IP
+intelligence, velocity, JA4 and HTTP/2 fingerprints) are done.
 
-| Browser setup (measured end to end) | Risk | Outcome |
+| Setup (measured end to end in real browsers) | Risk | Outcome |
 |---|---|---|
 | Default headless Chromium (Playwright) | 100 | block |
 | Default headless Firefox (Playwright) | 100 | block |
+| playwright-extra + stealth plugin, headless | 100 | block |
 | Headed Chromium over CDP, webdriver flag removed | 70 | challenged |
+| Stealth plugin + synthesised human-like input | 25 | allow (known miss) |
+| Script forging a perfect payload over Go TLS | 55 | challenged |
 | Real Chromium, no automation | 0 | allow |
 
 Known gaps are tracked in the open in

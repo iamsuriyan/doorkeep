@@ -20,7 +20,22 @@
     curve defeats these. Detection then rests on velocity and distribution
     (M2) and the challenge path.
 
-- signal: stealth plugins (puppeteer-extra-stealth, playwright-extra, patchright, Camoufox, Nodriver)
-  setup: not yet in the matrix
-  status: unmeasured
-  note: Added to the nightly matrix in M2.
+- signal: playwright-extra + puppeteer-extra-plugin-stealth, headless, default input
+  setup: tests/stealth.spec.ts
+  status: blocked (risk 100)
+  note: >
+    Stealth hides webdriver, HeadlessChrome and the chrome object, but scripted
+    input (fill without keys, exact-centre zero-duration clicks), a font set
+    that contradicts the claimed OS and an emulated network remain.
+
+- signal: playwright-extra + stealth, headed, synthesised human-like input
+  setup: tests/stealth.spec.ts (jittered keystrokes, curved mouse paths, real press durations)
+  status: allowed (risk 25 after the evidence guard; 0 before it)
+  note: >
+    Per-request detection is not realistic against this setup; the design says
+    so (threat model, section 9). Only FONT_OS_MISMATCH fires. Since
+    2026-10-22, synthesised human evidence no longer cancels a device
+    self-contradiction. Remaining defences are volume and distribution
+    (fingerprint and canvas velocity across networks, subnet device farms,
+    cadence) and per-site thresholds. Not yet measured: patchright, Camoufox,
+    Nodriver.

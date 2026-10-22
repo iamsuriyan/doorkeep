@@ -9,6 +9,11 @@
 #   where farbling applies) because privacy browsers lie by design.
 # - Behaviour rules require an automation marker or an impossibility, never
 #   mere absence: keyboard-only and screen-reader users have no pointer data.
+# - Human-evidence rules (negative weights) do not apply when the device
+#   contradicts itself (fonts, GPU, client hints, TLS, HTTP/2 vs claimed
+#   browser). Behaviour can be synthesised; a self-contradiction cannot be
+#   explained by behaviour. Measured case: stealth plugin + scripted
+#   human-like input (testing/e2e/tests/stealth.spec.ts).
 # - `floor: true` marks proof rather than evidence: the rules risk is at least
 #   that rule's weight, so negative human-evidence rules (which an attacker can
 #   replay) can never cancel it.
@@ -202,11 +207,13 @@
 
 - id: HUMAN_POINTER_EVIDENCE
   when: "beh.ptr_samples > 30 && beh.ptr_straightness < 0.9 && beh.ptr_interval_cv > 0.2 && beh.untrusted_frac < 0.05"
+  unless: "fp.font_os_mismatch == 1 || fp.gpu_os_mismatch == 1 || fp.uad_mismatch == 1 || fp.feat_mismatch >= 2 || net.ua_hdr_js_mismatch == 1 || net.ch_mismatch == 1 || net.tls_ua_mismatch == 1 || net.h2_ua_mismatch == 1 || auto.wd_tamper == 1"
   weight: -15
   description: Natural, trusted pointer movement observed
 
 - id: HUMAN_TYPING_EVIDENCE
   when: "beh.key_count >= 8 && beh.key_hold_cv > 0.15 && beh.key_interval_cv > 0.2 && beh.untrusted_frac < 0.05"
+  unless: "fp.font_os_mismatch == 1 || fp.gpu_os_mismatch == 1 || fp.uad_mismatch == 1 || fp.feat_mismatch >= 2 || net.ua_hdr_js_mismatch == 1 || net.ch_mismatch == 1 || net.tls_ua_mismatch == 1 || net.h2_ua_mismatch == 1 || auto.wd_tamper == 1"
   weight: -10
   description: Natural, trusted keyboard rhythm observed
 

@@ -26,7 +26,7 @@ export default async function setup() {
   const env = { ...process.env, PATH: `${process.env.HOME}/.local/go/bin:${process.env.PATH}` };
   execFileSync("go", ["build", "-o", join(ROOT, "bin/doorkeep"), "./cmd/doorkeep"], { cwd: ROOT, env, stdio: "inherit" });
   const data = mkdtempSync(join(tmpdir(), "dk-e2e-"));
-  const dkEnv = { ...env, DOORKEEP_DATA_DIR: data, DOORKEEP_LISTEN: `127.0.0.1:${DK_PORT}`, DOORKEEP_LOG_LEVEL: "warn" };
+  const dkEnv = { ...env, DOORKEEP_DATA_DIR: data, DOORKEEP_LISTEN: `127.0.0.1:${DK_PORT}`, DOORKEEP_LOG_LEVEL: "warn", DOORKEEP_IPDATA_AUTO_UPDATE: "false" };
   const out = execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", "e2e", "--origin", `http://localhost:${FIX_PORT}`], { env: dkEnv }).toString();
   const sitekey = /site key[^:]*:\s*(\S+)/.exec(out)![1];
   const secret = /secret[^:]*:\s*(\S+)/.exec(out)![1];

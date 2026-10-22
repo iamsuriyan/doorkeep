@@ -181,3 +181,19 @@ func TestHumanEvidenceCannotCancelProof(t *testing.T) {
 		t.Fatalf("replay proof cancelled by replayed behaviour: risk %d hits %v", r.Risk, ids(r.Hits))
 	}
 }
+
+func TestHumanEvidenceIgnoredWhenDeviceContradictsItself(t *testing.T) {
+	f := scoring.NewFeatures()
+	f.SetBool("fp.font_os_mismatch", true)
+	f.Set("beh.ptr_samples", 120)
+	f.Set("beh.ptr_straightness", 0.5)
+	f.Set("beh.ptr_interval_cv", 0.5)
+	f.Set("beh.untrusted_frac", 0)
+	f.Set("beh.key_count", 20)
+	f.Set("beh.key_hold_cv", 0.3)
+	f.Set("beh.key_interval_cv", 0.5)
+	r := eval(t, f, "signup")
+	if r.Risk != 25 {
+		t.Fatalf("human evidence offset a self-contradiction: risk %d hits %v", r.Risk, ids(r.Hits))
+	}
+}
