@@ -21,6 +21,7 @@ type Claims struct {
 	Reasons   []string `json:"rc"`
 	Challenge string   `json:"ch"`
 	IP24      string   `json:"ip24,omitempty"`
+	UA        string   `json:"ua,omitempty"` // browser family, binds edge cookies
 	V         int      `json:"v"`
 }
 

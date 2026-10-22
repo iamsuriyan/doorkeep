@@ -1,0 +1,32 @@
+# doorkeep edge mode for Traefik (ForwardAuth middleware, file provider).
+# Add Traefik's address to doorkeep's trusted_proxies.
+http:
+  middlewares:
+    dk-strip:
+      stripPrefix:
+        prefixes: ["/_dk"]
+    dk-redirect-mode:
+      headers:
+        customRequestHeaders:
+          X-Doorkeep-Mode: "redirect"
+    dk-auth:
+      forwardAuth:
+        address: "http://doorkeep:8080/v1/auth"
+        trustForwardHeader: true
+        authResponseHeaders: ["X-Doorkeep-Risk", "X-Doorkeep-Reasons"]
+  routers:
+    doorkeep:
+      rule: "PathPrefix(`/_dk/`)"
+      middlewares: ["dk-strip"]
+      service: doorkeep
+    protected:
+      rule: "PathPrefix(`/search`) || PathPrefix(`/api/`)"
+      middlewares: ["dk-redirect-mode", "dk-auth"]
+      service: app
+  services:
+    doorkeep:
+      loadBalancer:
+        servers: [{ url: "http://doorkeep:8080" }]
+    app:
+      loadBalancer:
+        servers: [{ url: "http://app:3000" }]

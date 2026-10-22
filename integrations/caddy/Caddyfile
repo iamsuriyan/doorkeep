@@ -1,0 +1,25 @@
+# doorkeep edge mode for Caddy (forward_auth is built in; no plugin needed).
+# Add Caddy's address to doorkeep's trusted_proxies.
+
+example.com {
+	# Snippet, challenge page and API on your own origin.
+	handle_path /_dk/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Protect expensive paths. doorkeep answers 302 to browsers (because of
+	# X-Doorkeep-Mode) and 401 JSON to API clients; Caddy passes either on.
+	@protected path /search* /api/*
+	handle @protected {
+		forward_auth 127.0.0.1:8080 {
+			uri /v1/auth
+			header_up X-Doorkeep-Mode redirect
+			copy_headers X-Doorkeep-Risk X-Doorkeep-Reasons
+		}
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
