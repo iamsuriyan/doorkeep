@@ -197,3 +197,34 @@ func TestHumanEvidenceIgnoredWhenDeviceContradictsItself(t *testing.T) {
 		t.Fatalf("human evidence offset a self-contradiction: risk %d hits %v", r.Risk, ids(r.Hits))
 	}
 }
+
+func TestEffectiveOverridesAndCustom(t *testing.T) {
+	base := builtin(t)
+	w := 5
+	cw := 30
+	set, err := Effective(base, map[string]Override{
+		"IP_DATACENTER": {Mode: ModeShadow},
+		"SOFTWARE_GPU":  {Weight: &w},
+		"MY_RULE":       {Custom: true, When: "fp.hc_bucket >= 4", Weight: &cw},
+	}, "v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := scoring.NewFeatures()
+	f.SetCat("net.asn_class", "hosting")
+	f.SetCat("fp.gpu_class", "software")
+	f.Set("fp.hc_bucket", 4)
+	r := set.Eval(Context(f.Env(), "x", nil))
+	if r.Risk != 35 || len(r.Shadow) != 1 || r.Shadow[0].ID != "IP_DATACENTER" {
+		t.Fatalf("risk %d hits %v shadow %v", r.Risk, ids(r.Hits), ids(r.Shadow))
+	}
+	if _, err := Effective(base, map[string]Override{"BAD": {Custom: true, When: "nope.x == 1"}}, "v3"); err == nil {
+		t.Fatal("bad custom rule accepted")
+	}
+	if _, err := Effective(base, map[string]Override{"NOPE": {Mode: ModeOff}}, "v4"); err == nil {
+		t.Fatal("override of unknown rule accepted")
+	}
+	if fired, _, ok := set.EvalOne("MY_RULE", Context(f.Env(), "x", nil)); !ok || !fired {
+		t.Fatal("EvalOne")
+	}
+}

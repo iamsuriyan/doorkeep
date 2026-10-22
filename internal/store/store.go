@@ -94,7 +94,42 @@ type EventFilter struct {
 	Outcome scoring.Outcome
 	Reason  string
 	FPHash  string
+	IP24    string // day-scoped /24 hash ("today's events from IP x")
+	Label   string
 	Limit   int
+}
+
+// AdminSession is a dashboard login session.
+type AdminSession struct {
+	TokenHash string
+	User      string
+	CSRF      string
+	ExpiresAt time.Time
+}
+
+// AuditEntry records one configuration change.
+type AuditEntry struct {
+	ID     int64          `json:"id"`
+	TS     time.Time      `json:"ts"`
+	Actor  string         `json:"actor"`
+	Action string         `json:"action"`
+	Target string         `json:"target"`
+	Detail map[string]any `json:"detail"`
+}
+
+// SiteRule is a per-site override of a built-in rule (mode/weight) or a
+// custom rule (full spec), stored as JSON.
+type SiteRule struct {
+	SiteID    string    `json:"site_id"`
+	RuleID    string    `json:"rule_id"`
+	Spec      []byte    `json:"spec"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Aggregate is one site-hour of counts, kept beyond event retention.
+type Aggregate struct {
+	Hour time.Time      `json:"hour"`
+	Data map[string]any `json:"data"`
 }
 
 // Store is everything the server needs.
@@ -114,12 +149,31 @@ type Store interface {
 	LabelEvent(ctx context.Context, id, label, source string) error
 	GetEvent(ctx context.Context, id string) (*Event, error)
 	ListEvents(ctx context.Context, f EventFilter) ([]*Event, error)
+	// StreamEvents calls fn for every event matching f (Limit ignored), in
+	// time order. Used for stats, rollups and the rule lab.
+	StreamEvents(ctx context.Context, f EventFilter, fn func(*Event) error) error
 	DeleteEvent(ctx context.Context, id string) error
 	PurgeEvents(ctx context.Context, before time.Time) (int64, error)
 
 	// CanvasSeen records (site, canvasHash) -> seedHash and reports whether
 	// the same canvas hash was seen with a different seed within window.
 	CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash string, now time.Time, window time.Duration) (conflict bool, err error)
+
+	CreateAdmin(ctx context.Context, name, passwordHash string, now time.Time) error
+	AdminPasswordHash(ctx context.Context, name string) (string, error)
+	ListAdmins(ctx context.Context) ([]string, error)
+	CreateSession(ctx context.Context, s *AdminSession, now time.Time) error
+	GetSession(ctx context.Context, tokenHash string, now time.Time) (*AdminSession, error)
+	DeleteSession(ctx context.Context, tokenHash string) error
+	CreateAdminToken(ctx context.Context, tokenHash, name string, now time.Time) error
+	AdminTokenName(ctx context.Context, tokenHash string) (string, error)
+	Audit(ctx context.Context, e AuditEntry) error
+	ListAudit(ctx context.Context, limit int) ([]AuditEntry, error)
+	SiteRules(ctx context.Context, siteID string) ([]SiteRule, error)
+	PutSiteRule(ctx context.Context, r SiteRule) error
+	DeleteSiteRule(ctx context.Context, siteID, ruleID string) error
+	PutAggregate(ctx context.Context, siteID string, a Aggregate) error
+	Aggregates(ctx context.Context, siteID string, since, until time.Time) ([]Aggregate, error)
 
 	SaveModels(ctx context.Context, snap map[string][]byte, now time.Time) error
 	LoadModels(ctx context.Context) (map[string][]byte, error)

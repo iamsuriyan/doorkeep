@@ -177,7 +177,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	applyIPInfo(feats, info, cls.TZCountry)
 	s.applyVelocity(feats, site.ID, ip, fpHash, cls, info)
 
-	res := s.Rules.Eval(rules.Context(feats.Env(), n.Action, interactive(site)))
+	res := s.siteRules(ctx, site.ID).Eval(rules.Context(feats.Env(), n.Action, interactive(site)))
 	listAction, listCode := s.matchLists(ctx, site.ID, ip, info, fpHash, r.UserAgent(), now)
 	th := site.ThresholdsFor(n.Action)
 	mr := s.Models.Score(site.ID, feats)

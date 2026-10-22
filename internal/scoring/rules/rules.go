@@ -242,3 +242,75 @@ func checkFeatureRefs(src string) error {
 	}
 	return nil
 }
+
+// Override is a per-site change to a rule. For a built-in rule only Mode and
+// Weight apply; Custom rules carry a full definition.
+type Override struct {
+	Mode        Mode   `json:"mode,omitempty"`
+	Weight      *int   `json:"weight,omitempty"`
+	Custom      bool   `json:"custom,omitempty"`
+	When        string `json:"when,omitempty"`
+	Unless      string `json:"unless,omitempty"`
+	Floor       bool   `json:"floor,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// Effective builds a site's rule set from the built-ins plus overrides keyed
+// by rule id. It fails if any expression does not compile, so a bad edit is
+// rejected at save time rather than silently ignored.
+func Effective(base *Set, overrides map[string]Override, version string) (*Set, error) {
+	var out []*Rule
+	seen := map[string]bool{}
+	for _, r := range base.rules {
+		c := *r
+		c.when, c.unless = nil, nil
+		if o, ok := overrides[r.ID]; ok && !o.Custom {
+			if o.Mode != "" {
+				c.Mode = o.Mode
+			}
+			if o.Weight != nil {
+				c.Weight = *o.Weight
+			}
+		}
+		out = append(out, &c)
+		seen[r.ID] = true
+	}
+	ids := make([]string, 0, len(overrides))
+	for id := range overrides {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		o := overrides[id]
+		if !o.Custom {
+			if !seen[id] {
+				return nil, fmt.Errorf("rules: override for unknown rule %s", id)
+			}
+			continue
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("rules: custom rule %s collides with a built-in id", id)
+		}
+		w := 0
+		if o.Weight != nil {
+			w = *o.Weight
+		}
+		out = append(out, &Rule{ID: id, When: o.When, Unless: o.Unless, Weight: w, Mode: o.Mode, Floor: o.Floor, Description: o.Description})
+	}
+	return Compile(out, version)
+}
+
+// EvalOne evaluates a single rule from the set against env, ignoring its
+// mode. Used by the rule lab to replay a rule over stored events.
+func (s *Set) EvalOne(id string, env map[string]any) (fired bool, weight int, ok bool) {
+	for _, r := range s.rules {
+		if r.ID != id {
+			continue
+		}
+		if !run(r.when, env) || (r.unless != nil && run(r.unless, env)) {
+			return false, r.Weight, true
+		}
+		return true, r.Weight, true
+	}
+	return false, 0, false
+}

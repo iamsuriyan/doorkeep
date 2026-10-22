@@ -360,7 +360,7 @@ func (db *DB) GetEvent(ctx context.Context, id string) (*store.Event, error) {
 	return scanEvent(db.r.QueryRowContext(ctx, `SELECT `+eventCols+` FROM events WHERE id=?`, id))
 }
 
-func (db *DB) ListEvents(ctx context.Context, f store.EventFilter) ([]*store.Event, error) {
+func eventWhere(f store.EventFilter) (string, []any) {
 	var where []string
 	var args []any
 	if f.SiteID != "" {
@@ -376,15 +376,26 @@ func (db *DB) ListEvents(ctx context.Context, f store.EventFilter) ([]*store.Eve
 		where, args = append(where, "outcome=?"), append(args, string(f.Outcome))
 	}
 	if f.FPHash != "" {
-		where, args = append(where, "fp_hash=?"), append(args, f.FPHash)
+		where, args = append(where, "fp_hash LIKE ?"), append(args, strings.ToLower(f.FPHash)+"%")
+	}
+	if f.IP24 != "" {
+		where, args = append(where, "ip24_hash=?"), append(args, f.IP24)
+	}
+	if f.Label != "" {
+		where, args = append(where, "label=?"), append(args, f.Label)
 	}
 	if f.Reason != "" {
 		where, args = append(where, `reasons LIKE ?`), append(args, `%"code":"`+f.Reason+`"%`)
 	}
-	q := `SELECT ` + eventCols + ` FROM events`
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
+	if len(where) == 0 {
+		return "", args
 	}
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+func (db *DB) ListEvents(ctx context.Context, f store.EventFilter) ([]*store.Event, error) {
+	w, args := eventWhere(f)
+	q := `SELECT ` + eventCols + ` FROM events` + w
 	limit := f.Limit
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -528,4 +539,190 @@ func (db *DB) LoadModels(ctx context.Context) (map[string][]byte, error) {
 		out[k] = b
 	}
 	return out, rows.Err()
+}
+
+// ---------------- admin ----------------
+
+func (db *DB) CreateAdmin(ctx context.Context, name, hash string, now time.Time) error {
+	_, err := db.w.ExecContext(ctx, `INSERT INTO admin_users(name,password_hash,created_at) VALUES(?,?,?)
+		ON CONFLICT(name) DO UPDATE SET password_hash=excluded.password_hash`, name, hash, ms(now))
+	return err
+}
+
+func (db *DB) AdminPasswordHash(ctx context.Context, name string) (string, error) {
+	var h string
+	err := db.r.QueryRowContext(ctx, `SELECT password_hash FROM admin_users WHERE name=?`, name).Scan(&h)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	return h, err
+}
+
+func (db *DB) ListAdmins(ctx context.Context) ([]string, error) {
+	rows, err := db.r.QueryContext(ctx, `SELECT name FROM admin_users ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) CreateSession(ctx context.Context, s *store.AdminSession, now time.Time) error {
+	_, _ = db.w.ExecContext(ctx, `DELETE FROM admin_sessions WHERE expires_at < ?`, ms(now))
+	_, err := db.w.ExecContext(ctx, `INSERT INTO admin_sessions(token_hash,user,csrf,created_at,expires_at) VALUES(?,?,?,?,?)`,
+		s.TokenHash, s.User, s.CSRF, ms(now), ms(s.ExpiresAt))
+	return err
+}
+
+func (db *DB) GetSession(ctx context.Context, tokenHash string, now time.Time) (*store.AdminSession, error) {
+	var s store.AdminSession
+	var exp int64
+	err := db.r.QueryRowContext(ctx, `SELECT token_hash,user,csrf,expires_at FROM admin_sessions WHERE token_hash=? AND expires_at > ?`, tokenHash, ms(now)).
+		Scan(&s.TokenHash, &s.User, &s.CSRF, &exp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.ExpiresAt = fromMS(exp)
+	return &s, nil
+}
+
+func (db *DB) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := db.w.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash=?`, tokenHash)
+	return err
+}
+
+func (db *DB) CreateAdminToken(ctx context.Context, tokenHash, name string, now time.Time) error {
+	_, err := db.w.ExecContext(ctx, `INSERT INTO admin_tokens(token_hash,name,created_at) VALUES(?,?,?)`, tokenHash, name, ms(now))
+	return err
+}
+
+func (db *DB) AdminTokenName(ctx context.Context, tokenHash string) (string, error) {
+	var n string
+	err := db.r.QueryRowContext(ctx, `SELECT name FROM admin_tokens WHERE token_hash=?`, tokenHash).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	return n, err
+}
+
+func (db *DB) Audit(ctx context.Context, e store.AuditEntry) error {
+	d, _ := json.Marshal(e.Detail)
+	if e.TS.IsZero() {
+		e.TS = time.Now()
+	}
+	_, err := db.w.ExecContext(ctx, `INSERT INTO audit_log(ts,actor,action,target,detail) VALUES(?,?,?,?,?)`, ms(e.TS), e.Actor, e.Action, e.Target, string(d))
+	return err
+}
+
+func (db *DB) ListAudit(ctx context.Context, limit int) ([]store.AuditEntry, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := db.r.QueryContext(ctx, `SELECT id,ts,actor,action,target,detail FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.AuditEntry
+	for rows.Next() {
+		var e store.AuditEntry
+		var ts int64
+		var d string
+		if err := rows.Scan(&e.ID, &ts, &e.Actor, &e.Action, &e.Target, &d); err != nil {
+			return nil, err
+		}
+		e.TS = fromMS(ts)
+		_ = json.Unmarshal([]byte(d), &e.Detail)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) SiteRules(ctx context.Context, siteID string) ([]store.SiteRule, error) {
+	rows, err := db.r.QueryContext(ctx, `SELECT site_id,rule_id,spec,updated_at FROM site_rules WHERE site_id=? ORDER BY rule_id`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.SiteRule
+	for rows.Next() {
+		var r store.SiteRule
+		var spec string
+		var ts int64
+		if err := rows.Scan(&r.SiteID, &r.RuleID, &spec, &ts); err != nil {
+			return nil, err
+		}
+		r.Spec, r.UpdatedAt = []byte(spec), fromMS(ts)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) PutSiteRule(ctx context.Context, r store.SiteRule) error {
+	_, err := db.w.ExecContext(ctx, `INSERT INTO site_rules(site_id,rule_id,spec,updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(site_id,rule_id) DO UPDATE SET spec=excluded.spec, updated_at=excluded.updated_at`,
+		r.SiteID, r.RuleID, string(r.Spec), ms(r.UpdatedAt))
+	return err
+}
+
+func (db *DB) DeleteSiteRule(ctx context.Context, siteID, ruleID string) error {
+	_, err := db.w.ExecContext(ctx, `DELETE FROM site_rules WHERE site_id=? AND rule_id=?`, siteID, ruleID)
+	return err
+}
+
+func (db *DB) PutAggregate(ctx context.Context, siteID string, a store.Aggregate) error {
+	d, _ := json.Marshal(a.Data)
+	_, err := db.w.ExecContext(ctx, `INSERT INTO aggregates_hourly(site_id,hour,data) VALUES(?,?,?)
+		ON CONFLICT(site_id,hour) DO UPDATE SET data=excluded.data`, siteID, a.Hour.Unix(), string(d))
+	return err
+}
+
+func (db *DB) Aggregates(ctx context.Context, siteID string, since, until time.Time) ([]store.Aggregate, error) {
+	rows, err := db.r.QueryContext(ctx, `SELECT hour,data FROM aggregates_hourly WHERE site_id=? AND hour>=? AND hour<? ORDER BY hour`, siteID, since.Unix(), until.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Aggregate
+	for rows.Next() {
+		var h int64
+		var d string
+		if err := rows.Scan(&h, &d); err != nil {
+			return nil, err
+		}
+		a := store.Aggregate{Hour: time.Unix(h, 0).UTC()}
+		_ = json.Unmarshal([]byte(d), &a.Data)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) StreamEvents(ctx context.Context, f store.EventFilter, fn func(*store.Event) error) error {
+	w, args := eventWhere(f)
+	rows, err := db.r.QueryContext(ctx, `SELECT `+eventCols+` FROM events`+w+` ORDER BY ts`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return err
+		}
+		if err := fn(e); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }

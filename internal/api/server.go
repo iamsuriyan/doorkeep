@@ -43,6 +43,7 @@ type Server struct {
 	Vel    *velocity.Tracker
 	Visual *visual.Generator
 	Models *model.Registry
+	rc     ruleCache
 	Log    *slog.Logger
 	Now    func() time.Time
 	mux    *http.ServeMux
@@ -59,6 +60,7 @@ func New(cfg *config.Config, st store.Store, rs *rules.Set, log *slog.Logger) *S
 	s.Vel = velocity.New(func() time.Time { return s.Now() })
 	s.Visual = visual.New(cfg.SecretBytes())
 	s.Models = model.NewRegistry(func() time.Time { return s.Now() })
+	s.rc.sets = map[string]*rules.Set{}
 	s.routes()
 	return s
 }
@@ -78,6 +80,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/report", s.handleReport)
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
 	m.HandleFunc("GET /readyz", s.handleReady)
+	s.adminRoutes(m)
 	s.mux = m
 }
 

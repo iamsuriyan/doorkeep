@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
@@ -47,7 +49,7 @@ func listMatch(kind, value string, ip netip.Addr, info ipintel.Info, fpHash, ua 
 	case "fp":
 		return value != "" && strings.HasPrefix(fpHash, strings.ToLower(value))
 	case "ua_regex":
-		re, err := regexp.Compile(value)
+		re, err := compileRegexp(value)
 		return err == nil && re.MatchString(ua)
 	case "asn":
 		n, err := strconv.ParseUint(strings.TrimPrefix(strings.ToUpper(value), "AS"), 10, 32)
@@ -60,4 +62,23 @@ func listMatch(kind, value string, ip netip.Addr, info ipintel.Info, fpHash, ua 
 		return info.Tor
 	}
 	return false
+}
+
+var reCache sync.Map
+
+// compileRegexp compiles and caches operator-supplied UA patterns, bounded
+// in length (Go's RE2 engine is linear-time, so no catastrophic backtracking).
+func compileRegexp(p string) (*regexp.Regexp, error) {
+	if v, ok := reCache.Load(p); ok {
+		return v.(*regexp.Regexp), nil
+	}
+	if len(p) > 256 {
+		return nil, errors.New("pattern too long")
+	}
+	re, err := regexp.Compile(p)
+	if err != nil {
+		return nil, err
+	}
+	reCache.Store(p, re)
+	return re, nil
 }

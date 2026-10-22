@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -55,6 +56,8 @@ func main() {
 		err = migrate(os.Args[2:])
 	case "ipdata":
 		err = ipdata(os.Args[2:])
+	case "admin":
+		err = admin(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("doorkeep", version)
 	case "help", "-h", "--help":
@@ -76,6 +79,8 @@ Usage:
   doorkeep serve [--config path]
   doorkeep site create --name NAME --origin URL [--origin URL ...] [--mode enforce|monitor|challenge_only]
   doorkeep site list
+  doorkeep admin create --user NAME     (reads the password from stdin)
+  doorkeep admin token --name NAME      (prints a bearer token for automation)
   doorkeep ipdata update [--config path]
   doorkeep migrate [--config path]
   doorkeep version
@@ -132,6 +137,7 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go janitor(ctx, db, cfg, log)
+	go rollup(ctx, srv, log)
 	go ipdataRefresher(ctx, srv.IP, cfg, log)
 	go modelSaver(ctx, srv, db, log)
 
@@ -380,4 +386,72 @@ func modelSaver(ctx context.Context, srv *api.Server, db store.Store, log *slog.
 			}
 		}
 	}
+}
+
+// rollup keeps hourly aggregates current (re-running recent hours so late
+// labels and verifications are included).
+func rollup(ctx context.Context, srv *api.Server, log *slog.Logger) {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	for {
+		if err := srv.Rollup(ctx, 3); err != nil && ctx.Err() == nil {
+			log.Error("rollup", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func admin(args []string) error {
+	if len(args) == 0 {
+		return errors.New("admin: expected create or token")
+	}
+	switch args[0] {
+	case "create":
+		fs := flag.NewFlagSet("admin create", flag.ExitOnError)
+		user := fs.String("user", "", "admin user name")
+		_, db, err := load(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if *user == "" {
+			return errors.New("admin create: --user is required")
+		}
+		fmt.Fprint(os.Stderr, "Password (min 12 characters), then Enter: ")
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil && line == "" {
+			return err
+		}
+		hash, err := api.HashPassword(strings.TrimRight(line, "\r\n"))
+		if err != nil {
+			return err
+		}
+		if err := db.CreateAdmin(context.Background(), *user, hash, time.Now()); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "\nAdmin %q saved. Open /admin/ to sign in.\n", *user)
+		return nil
+	case "token":
+		fs := flag.NewFlagSet("admin token", flag.ExitOnError)
+		name := fs.String("name", "", "label for the token, e.g. terraform")
+		_, db, err := load(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if *name == "" {
+			return errors.New("admin token: --name is required")
+		}
+		tok, err := api.NewAdminToken(context.Background(), db, *name, time.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Println(tok)
+		return nil
+	}
+	return fmt.Errorf("admin: unknown subcommand %q", args[0])
 }
