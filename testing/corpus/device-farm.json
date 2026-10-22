@@ -1,0 +1,10 @@
+{
+  "name": "Device farm: one fingerprint across many networks, many devices in one subnet",
+  "source": "Velocity rules; synthetic distribution",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "vel.fp_distinct_asn_1h": 7, "vel.ip24_distinct_fp_10m": 60, "beh.total_events": 30, "t.elapsed_s": 6},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "android", "auto.eng": "v8", "fp.gpu_class": "hardware", "net.asn_class": "mobile"}
+  },
+  "expect": {"outcome": "block", "min_risk": 75, "fires": ["FP_MULTI_ASN", "SUBNET_DEVICE_FARM"]}
+}

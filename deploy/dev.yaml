@@ -1,0 +1,11 @@
+# Local development: `make dev`. Dashboard at http://127.0.0.1:8081/admin/
+# after `go run ./cmd/doorkeep admin create --user dev --config deploy/dev.yaml`.
+listen: "127.0.0.1:8080"
+admin_listen: "127.0.0.1:8081"
+data_dir: ./data/dev
+log_level: debug
+# Development works offline; run `doorkeep ipdata update` to try the
+# network signals.
+ipdata_auto_update: false
+token_ttl: 5m
+event_retention: 168h

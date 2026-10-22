@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/store"
 )
 
@@ -30,6 +31,15 @@ const (
 	sessionCookie   = "dk_admin"
 	loginFailWindow = 15 * time.Minute
 	loginMaxFails   = 5
+	// loginSlowFails is the per-user failure count (from any network) after
+	// which every attempt for that user is slowed down. A hard per-user lock
+	// would let anyone who can reach the listener lock the admin out, so
+	// hard locks are per (user, /24) and per address only.
+	loginSlowFails = 20
+	loginSlowDelay = 2 * time.Second
+
+	// DefaultAdminTokenTTL is the lifetime of a bearer token unless chosen.
+	DefaultAdminTokenTTL = 90 * 24 * time.Hour
 )
 
 // HashPassword returns an argon2id PHC string.
@@ -81,9 +91,14 @@ func randToken(n int) string {
 }
 
 // NewAdminToken creates a bearer token for automation and returns it once.
-func NewAdminToken(ctx context.Context, st store.Store, name string, now time.Time) (string, error) {
+// ttl <= 0 creates a token that does not expire.
+func NewAdminToken(ctx context.Context, st store.Store, name string, now time.Time, ttl time.Duration) (string, error) {
 	tok := "dk_admin_" + randToken(32)
-	return tok, st.CreateAdminToken(ctx, sha256hex(tok), name, now)
+	var exp time.Time
+	if ttl > 0 {
+		exp = now.Add(ttl)
+	}
+	return tok, st.CreateAdminToken(ctx, sha256hex(tok), name, now, exp)
 }
 
 type actorKey struct{}
@@ -100,7 +115,7 @@ func (s *Server) adminAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-			name, err := s.Store.AdminTokenName(ctx, sha256hex(strings.TrimPrefix(h, "Bearer ")))
+			name, err := s.Store.AdminTokenName(ctx, sha256hex(strings.TrimPrefix(h, "Bearer ")), s.Now())
 			if err != nil {
 				problem(w, http.StatusUnauthorized, "unauthorized", "invalid admin token")
 				return
@@ -137,19 +152,30 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "bad-request", "user and password required")
 		return
 	}
-	ip := s.clientIP(r).String()
-	if s.Vel.Count("login-user:"+req.User, loginFailWindow) >= loginMaxFails || s.Vel.Count("login-ip:"+ip, loginFailWindow) >= loginMaxFails*4 {
+	ip := s.clientIP(r)
+	kUser := "login-user:" + s.Keys.VelKey(req.User)
+	kUserNet := "login-usernet:" + s.Keys.VelKey(req.User+"|"+pseudo.Prefix(ip))
+	kIP := "login-ip:" + s.Keys.VelKey(ip.String())
+	if s.Vel.Count(kUserNet, loginFailWindow) >= loginMaxFails || s.Vel.Count(kIP, loginFailWindow) >= loginMaxFails*4 {
 		w.Header().Set("Retry-After", "900")
 		problem(w, http.StatusTooManyRequests, "locked", "too many failed logins; try again later")
 		return
+	}
+	if s.Vel.Count(kUser, loginFailWindow) >= loginSlowFails {
+		select {
+		case <-time.After(loginSlowDelay):
+		case <-r.Context().Done():
+			return
+		}
 	}
 	hash, err := s.Store.AdminPasswordHash(r.Context(), req.User)
 	if err != nil {
 		hash = dummyHash
 	}
 	if !checkPassword(req.Password, hash) || err != nil {
-		s.Vel.Add("login-user:" + req.User)
-		s.Vel.Add("login-ip:" + ip)
+		s.Vel.Add(kUser)
+		s.Vel.Add(kUserNet)
+		s.Vel.Add(kIP)
 		_ = s.Store.Audit(r.Context(), store.AuditEntry{TS: s.Now(), Actor: "anonymous", Action: "login.failed", Target: req.User})
 		problem(w, http.StatusUnauthorized, "unauthorized", "invalid user or password")
 		return
@@ -160,18 +186,37 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: tok, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode,
-		Secure: r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"), MaxAge: int(sessionTTL.Seconds()),
+		// No Path: the browser scopes the cookie to the API directory it was
+		// set from (.../admin/v1), which also works under a proxy prefix.
+		Name: sessionCookie, Value: tok, HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		Secure: s.requestIsHTTPS(r), MaxAge: int(sessionTTL.Seconds()),
 	})
 	_ = s.Store.Audit(r.Context(), store.AuditEntry{TS: s.Now(), Actor: "user:" + req.User, Action: "login", Target: req.User})
 	writeJSON(w, http.StatusOK, map[string]string{"user": req.User, "csrf": csrf})
 }
 
+// requestIsHTTPS reports whether the client connection is HTTPS, trusting
+// X-Forwarded-Proto only from configured proxies.
+func (s *Server) requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return s.fromTrustedProxy(r) && strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		_ = s.Store.DeleteSession(r.Context(), sha256hex(c.Value))
+		// Logging out is a state change, so it needs the session's CSRF
+		// token like every other write.
+		if sess, err := s.Store.GetSession(r.Context(), sha256hex(c.Value), s.Now()); err == nil {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(sess.CSRF)) != 1 {
+				problem(w, http.StatusForbidden, "csrf", "missing or invalid CSRF token")
+				return
+			}
+			_ = s.Store.DeleteSession(r.Context(), sha256hex(c.Value))
+		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/admin", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -4,17 +4,19 @@ Every integration does three things: load the snippet (ideally from your own
 origin under `/_dk/`), put a placeholder inside the form, and verify the
 `dk-response` field on the server with your site secret.
 
-| Stack | Package / file | Tested end to end |
+| Stack | Package / file | Tested |
 |---|---|---|
-| Any backend | `POST /v1/siteverify` (Turnstile-compatible) | yes |
-| Go | `github.com/iamsuriyan/doorkeep/pkg/verify` | yes |
+| Any backend | `POST /v1/siteverify` (Turnstile-compatible) | end to end |
+| Plain HTML + Go | `examples/static-form` | unit, against a stand-in server |
+| Go | `github.com/iamsuriyan/doorkeep/pkg/verify` | end to end |
 | Node.js | `@doorkeep/verify` (`integrations/node`) | unit |
-| Next.js | `@doorkeep/next` (`integrations/nextjs`), example in `examples/nextjs-signup` | yes, real Next.js 16 Server Action |
-| PHP | `doorkeep/verify` (`integrations/php`) | yes, PHP 8.3 against a live server |
-| WordPress | plugin in `integrations/wordpress/doorkeep` | yes, real WordPress 6 (login, comments) |
-| nginx | `integrations/nginx/doorkeep.conf` (auth_request) | yes, nginx 1.27 |
-| Caddy | `integrations/caddy/Caddyfile` (forward_auth) | yes, Caddy 2 |
-| Traefik | `integrations/traefik/dynamic.yml` (ForwardAuth) | config only |
+| Next.js | `@doorkeep/next` (`integrations/nextjs`), example in `examples/nextjs-signup` | end to end, real Next.js 16 Server Action; edge gate unit-tested |
+| PHP | `doorkeep/verify` (`integrations/php`) | unit on PHP 8.1 and 8.4 in CI, against a live stand-in server |
+| WordPress | plugin in `integrations/wordpress/doorkeep`, stack in `examples/wordpress` | end to end on real WordPress 6 (login, comments) and WooCommerce 10.2 block checkout (opt-in: `DK_WP=1 DK_WC=1 make e2e`); proxy and settings logic unit-tested in CI |
+| nginx | `integrations/nginx/doorkeep.conf` (auth_request), forge example in `examples/forge-nginx` | end to end, nginx 1.27 |
+| Caddy | `integrations/caddy/Caddyfile` (forward_auth) | end to end, Caddy 2 |
+| Traefik | `integrations/traefik/dynamic.yml` (ForwardAuth) | end to end, Traefik 3.3 |
+| Any TLS proxy | `dk-ja4` (`cmd/dk-ja4`) adds JA4 and HTTP/2 fingerprints | end to end over real TLS, HTTP/1.1 and HTTP/2 |
 
 ## Forms (snippet + verify)
 
@@ -39,8 +41,10 @@ you prefer your own threshold; set the site to monitor mode in that case.
 
 ## Whole paths (edge mode)
 
-Put expensive or abused paths (search, signup pages, `git clone` over HTTP,
-APIs) behind the hosted check with your proxy's built-in auth sub-request.
+Put expensive or abused pages (search, repository browsing, archives,
+signup pages) behind the hosted check with your proxy's built-in auth
+sub-request. Leave paths used by non-browser clients (git over HTTPS, your
+API, feeds, webhooks) unprotected or allow-listed: they cannot run the check.
 See `integrations/nginx`, `integrations/caddy`, `integrations/traefik`.
 Verified crawlers (Googlebot, Bingbot, GPTBot by published IP ranges) and
 your allow-lists pass without a check.

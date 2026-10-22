@@ -1,0 +1,41 @@
+# Forgejo behind nginx with doorkeep edge mode: see README.md.
+name: doorkeep-forge
+
+services:
+  doorkeep:
+    build: { context: ../.., dockerfile: deploy/Dockerfile }
+    image: ghcr.io/iamsuriyan/doorkeep:dev
+    restart: unless-stopped
+    environment:
+      DOORKEEP_TRUSTED_PROXIES: 172.29.0.0/16   # nginx
+    ports: ["127.0.0.1:8081:8081"]              # dashboard, localhost only
+    volumes: [doorkeep:/data]
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:12
+    restart: unless-stopped
+    environment:
+      FORGEJO__server__ROOT_URL: http://localhost:8000/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__database__DB_TYPE: sqlite3
+    volumes: [forgejo:/data]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on: [doorkeep, forgejo]
+    ports: ["8000:8000"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./forge_proxy.conf:/etc/nginx/forge_proxy.conf:ro
+      - ../../integrations/nginx/doorkeep.conf:/etc/nginx/doorkeep.conf:ro
+
+networks:
+  default:
+    ipam:
+      config: [{ subnet: 172.29.0.0/16 }]
+
+volumes:
+  doorkeep:
+  forgejo:

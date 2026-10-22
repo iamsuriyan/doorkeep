@@ -1,0 +1,11 @@
+{
+  "name": "Tor Browser (resistFingerprinting) over a Tor exit",
+  "source": "Design principle: privacy browsers get a reduced rule set, not a penalty",
+  "action": "signup",
+  "features": {
+    "num": {"prof.rfp": 1, "prof.tor": 1, "fp.feat_mismatch": 4, "fp.tz_offset_mismatch": 1, "fp.canvas_blocked": 1, "fp.font_os_mismatch": 1,
+            "net.ip_tor": 1, "net.tz_ip_country_match": 0, "auto.wd": 0, "beh.total_events": 50, "t.elapsed_s": 20},
+    "cat": {"fp.ua_family": "firefox", "fp.os_family": "windows", "auto.eng": "spidermonkey", "fp.gpu_class": "software"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 34, "fires": ["PROFILE_RFP", "IP_TOR"], "not_fires": ["UA_FEATURE_MISMATCH", "FONT_OS_MISMATCH", "SOFTWARE_GPU", "TIMEZONE_OFFSET_MISMATCH"]}
+}

@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -59,6 +61,8 @@ func main() {
 		err = ipdata(os.Args[2:])
 	case "admin":
 		err = admin(os.Args[2:])
+	case "export-datamap":
+		err = exportDataMap(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("doorkeep", version)
 	case "help", "-h", "--help":
@@ -81,8 +85,10 @@ Usage:
   doorkeep site create --name NAME --origin URL [--origin URL ...] [--mode enforce|monitor|challenge_only]
   doorkeep site list
   doorkeep admin create --user NAME     (reads the password from stdin)
-  doorkeep admin token --name NAME      (prints a bearer token for automation)
+  doorkeep admin token --name NAME [--ttl 90d]   (prints a bearer token for automation)
+  doorkeep admin token list | revoke ID
   doorkeep ipdata update [--config path]
+  doorkeep export-datamap [--format md|json]   (privacy data map for your records)
   doorkeep migrate [--config path]
   doorkeep version
 
@@ -223,7 +229,8 @@ func serve(args []string) error {
 	return nil
 }
 
-// janitor purges expired nonces and events past retention.
+// janitor purges expired nonces, canvas replay records older than the
+// replay window, events past retention and aggregates older than 13 months.
 func janitor(ctx context.Context, db store.Store, cfg *config.Config, log *slog.Logger) {
 	t := time.NewTicker(10 * time.Minute)
 	defer t.Stop()
@@ -231,6 +238,12 @@ func janitor(ctx context.Context, db store.Store, cfg *config.Config, log *slog.
 		now := time.Now()
 		if n, err := db.PurgeExpired(ctx, now.Add(-nonce.Retention)); err == nil && n > 0 {
 			log.Debug("purged nonces", "count", n)
+		}
+		if n, err := db.PurgeCanvas(ctx, now.Add(-api.CanvasReplayWindow)); err == nil && n > 0 {
+			log.Debug("purged canvas replay records", "count", n)
+		}
+		if n, err := db.PurgeAggregates(ctx, now.Add(-api.AggregateRetention)); err == nil && n > 0 {
+			log.Debug("purged hourly aggregates", "count", n)
 		}
 		if n, err := db.PurgeEvents(ctx, now.Add(-cfg.EventRetention)); err == nil && n > 0 {
 			log.Info("purged events past retention", "count", n)
@@ -326,8 +339,8 @@ func randToken(n int) string {
 func loadIPData(st *ipintel.Store, cfg *config.Config, log *slog.Logger) {
 	db, err := ipintel.Load(cfg.IPDataDir())
 	if err != nil {
-		log.Error("ipdata load", "err", err)
-		return
+		// Load still returns the sources that did parse.
+		log.Error("ipdata load incomplete", "err", err)
 	}
 	st.Set(db)
 	c := db.Counts()
@@ -378,7 +391,10 @@ func ipdata(args []string) error {
 	start := time.Now()
 	err = ipintel.Update(context.Background(), cfg.IPDataDir(), nil)
 	db, lerr := ipintel.Load(cfg.IPDataDir())
-	if lerr == nil {
+	if lerr != nil {
+		fmt.Fprintln(os.Stderr, "doorkeep: some ipdata files could not be read:", lerr)
+	}
+	{
 		c := db.Counts()
 		fmt.Printf("ipdata in %s: %d v4 ranges, %d v6 ranges, %d Tor exits, %d DROP prefixes (%s)\n",
 			cfg.IPDataDir(), c["v4"], c["v6"], c["tor"], c["drop"], time.Since(start).Round(time.Millisecond))
@@ -432,8 +448,11 @@ func rollup(ctx context.Context, srv *api.Server, log *slog.Logger) {
 		if err := srv.Rollup(ctx, 3); err != nil && ctx.Err() == nil {
 			log.Error("rollup", "err", err)
 		}
-		if t, ok := srv.Vel.(*velocity.Tracker); ok {
-			t.Sweep()
+		switch v := srv.Vel.(type) {
+		case *velocity.Tracker:
+			v.Sweep()
+		case *velocity.Redis:
+			v.Local().Sweep()
 		}
 		select {
 		case <-ctx.Done():
@@ -474,22 +493,129 @@ func admin(args []string) error {
 		fmt.Fprintf(os.Stderr, "\nAdmin %q saved. Open /admin/ to sign in.\n", *user)
 		return nil
 	case "token":
-		fs := flag.NewFlagSet("admin token", flag.ExitOnError)
-		name := fs.String("name", "", "label for the token, e.g. terraform")
+		return adminToken(args[1:])
+	}
+	return fmt.Errorf("admin: unknown subcommand %q", args[0])
+}
+
+// adminToken manages bearer tokens:
+//
+//	admin token --name NAME [--ttl 90d]   create (prints the token once)
+//	admin token list
+//	admin token revoke ID
+func adminToken(args []string) error {
+	if len(args) > 0 && (args[0] == "list" || args[0] == "revoke") {
+		fs := flag.NewFlagSet("admin token "+args[0], flag.ExitOnError)
 		_, db, err := load(fs, args[1:])
 		if err != nil {
 			return err
 		}
 		defer db.Close()
-		if *name == "" {
-			return errors.New("admin token: --name is required")
+		if args[0] == "list" {
+			toks, err := db.ListAdminTokens(context.Background())
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%-12s  %-20s  %-20s  %-20s  %s\n", "ID", "NAME", "CREATED", "EXPIRES", "LAST USED")
+			for _, t := range toks {
+				fmt.Printf("%-12s  %-20s  %-20s  %-20s  %s\n", t.ID, t.Name, t.CreatedAt.UTC().Format(time.DateTime),
+					optTime(t.ExpiresAt, "never"), optTime(t.LastUsedAt, "-"))
+			}
+			return nil
 		}
-		tok, err := api.NewAdminToken(context.Background(), db, *name, time.Now())
-		if err != nil {
+		if fs.NArg() != 1 {
+			return errors.New("admin token revoke: expected exactly one token ID (see `doorkeep admin token list`)")
+		}
+		if err := db.RevokeAdminToken(context.Background(), fs.Arg(0)); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("admin token revoke: no token with ID %q", fs.Arg(0))
+			}
 			return err
 		}
-		fmt.Println(tok)
+		_ = db.Audit(context.Background(), store.AuditEntry{TS: time.Now(), Actor: "cli", Action: "token.revoke", Target: fs.Arg(0)})
+		fmt.Fprintln(os.Stderr, "Token revoked.")
 		return nil
 	}
-	return fmt.Errorf("admin: unknown subcommand %q", args[0])
+	fs := flag.NewFlagSet("admin token", flag.ExitOnError)
+	name := fs.String("name", "", "label for the token, e.g. terraform")
+	ttlFlag := fs.String("ttl", "90d", "lifetime, e.g. 30d or 720h; 0 for no expiry")
+	_, db, err := load(fs, args)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if *name == "" {
+		return errors.New("admin token: --name is required")
+	}
+	ttl, err := parseTTL(*ttlFlag)
+	if err != nil {
+		return fmt.Errorf("admin token: --ttl: %w", err)
+	}
+	tok, err := api.NewAdminToken(context.Background(), db, *name, time.Now(), ttl)
+	if err != nil {
+		return err
+	}
+	fmt.Println(tok)
+	return nil
+}
+
+// parseTTL accepts Go durations plus a "d" (days) suffix; "0" means none.
+func parseTTL(v string) (time.Duration, error) {
+	if v == "0" {
+		return 0, nil
+	}
+	if d, ok := strings.CutSuffix(v, "d"); ok {
+		n, err := strconv.Atoi(d)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid days %q", v)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid duration %q", v)
+	}
+	return d, nil
+}
+
+func optTime(t *time.Time, none string) string {
+	if t == nil {
+		return none
+	}
+	return t.UTC().Format(time.DateTime)
+}
+
+// exportDataMap prints the privacy data map for this configuration, for a
+// record of processing (GDPR Art. 30) or a DPDP notice.
+func exportDataMap(args []string) error {
+	fs := flag.NewFlagSet("export-datamap", flag.ExitOnError)
+	format := fs.String("format", "md", "md or json")
+	cfgPath := fs.String("config", os.Getenv("DOORKEEP_CONFIG"), "path to config YAML")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	p := api.PrivacyReport(cfg)
+	switch *format {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(p)
+	case "md":
+		cell := func(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
+		fmt.Printf("# doorkeep data map\n\nGenerated %s by `doorkeep export-datamap` from this instance's configuration. Events are kept %d days.\n\n",
+			time.Now().UTC().Format("2006-01-02"), p.EventRetentionDays)
+		fmt.Println("| Data | Stored as | Purpose | Retention | GDPR | DPDP |")
+		fmt.Println("|---|---|---|---|---|---|")
+		for _, r := range p.DataMap {
+			fmt.Printf("| %s | %s | %s | %s | %s | %s |\n", cell(r.Item), cell(r.AtRest), cell(r.Purpose), cell(r.Retention), cell(r.GDPR), cell(r.DPDP))
+		}
+		fmt.Printf("\n**Fingerprints:** %s\n\n**IP addresses:** %s\n\n**Never collected:** %s.\n",
+			p.Pseudonymisation["fingerprint"], p.Pseudonymisation["ip"], strings.Join(p.NeverCollected, ", "))
+		return nil
+	}
+	return fmt.Errorf("export-datamap: unknown format %q (md or json)", *format)
 }

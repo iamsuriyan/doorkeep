@@ -85,7 +85,7 @@ func (s *Server) adminListRules(w http.ResponseWriter, r *http.Request) {
 	}
 	ov, err := s.overrides(r.Context(), site.ID)
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	builtin := map[string]bool{}
@@ -121,7 +121,7 @@ func (s *Server) adminPutRule(w http.ResponseWriter, r *http.Request) {
 	}
 	ov, err := s.overrides(r.Context(), site.ID)
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	before, had := ov[id]
@@ -132,7 +132,7 @@ func (s *Server) adminPutRule(w http.ResponseWriter, r *http.Request) {
 	}
 	spec, _ := json.Marshal(o)
 	if err := s.Store.PutSiteRule(r.Context(), store.SiteRule{SiteID: site.ID, RuleID: id, Spec: spec, UpdatedAt: s.Now()}); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.invalidateRules(site.ID)
@@ -151,7 +151,7 @@ func (s *Server) adminDeleteRule(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("rule")
 	if err := s.Store.DeleteSiteRule(r.Context(), site.ID, id); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.invalidateRules(site.ID)
@@ -203,7 +203,7 @@ func (s *Server) adminRuleLab(w http.ResponseWriter, r *http.Request) {
 	}
 	ov, err := s.overrides(r.Context(), site.ID)
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if in.Override.Mode == "" {
@@ -262,7 +262,7 @@ func (s *Server) adminRuleLab(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)

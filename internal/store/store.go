@@ -107,6 +107,19 @@ type AdminSession struct {
 	ExpiresAt time.Time
 }
 
+// AdminToken describes a bearer token without revealing it. ID is a prefix
+// of the token's hash, enough to name it for revocation.
+type AdminToken struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
+// AdminTokenIDLen is the length of AdminToken.ID in hex characters.
+const AdminTokenIDLen = 12
+
 // AuditEntry records one configuration change.
 type AuditEntry struct {
 	ID     int64          `json:"id"`
@@ -158,6 +171,13 @@ type Store interface {
 	// CanvasSeen records (site, canvasHash) -> seedHash and reports whether
 	// the same canvas hash was seen with a different seed within window.
 	CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash string, now time.Time, window time.Duration) (conflict bool, err error)
+	// PurgeCanvas deletes replay records last seen before before.
+	PurgeCanvas(ctx context.Context, before time.Time) (int64, error)
+
+	// GetKV and PutKV hold small pieces of server state (e.g. the rollup
+	// high-water mark). GetKV returns ErrNotFound for a missing key.
+	GetKV(ctx context.Context, key string) (string, error)
+	PutKV(ctx context.Context, key, value string) error
 
 	CreateAdmin(ctx context.Context, name, passwordHash string, now time.Time) error
 	AdminPasswordHash(ctx context.Context, name string) (string, error)
@@ -165,8 +185,13 @@ type Store interface {
 	CreateSession(ctx context.Context, s *AdminSession, now time.Time) error
 	GetSession(ctx context.Context, tokenHash string, now time.Time) (*AdminSession, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
-	CreateAdminToken(ctx context.Context, tokenHash, name string, now time.Time) error
-	AdminTokenName(ctx context.Context, tokenHash string) (string, error)
+	// CreateAdminToken stores a bearer token hash; a zero expires never expires.
+	CreateAdminToken(ctx context.Context, tokenHash, name string, now, expires time.Time) error
+	// AdminTokenName resolves an unexpired token and records its use.
+	AdminTokenName(ctx context.Context, tokenHash string, now time.Time) (string, error)
+	ListAdminTokens(ctx context.Context) ([]AdminToken, error)
+	// RevokeAdminToken deletes the token whose ID (hash prefix) is id.
+	RevokeAdminToken(ctx context.Context, id string) error
 	Audit(ctx context.Context, e AuditEntry) error
 	ListAudit(ctx context.Context, limit int) ([]AuditEntry, error)
 	SiteRules(ctx context.Context, siteID string) ([]SiteRule, error)
@@ -174,6 +199,8 @@ type Store interface {
 	DeleteSiteRule(ctx context.Context, siteID, ruleID string) error
 	PutAggregate(ctx context.Context, siteID string, a Aggregate) error
 	Aggregates(ctx context.Context, siteID string, since, until time.Time) ([]Aggregate, error)
+	// PurgeAggregates deletes hourly aggregates for hours before before.
+	PurgeAggregates(ctx context.Context, before time.Time) (int64, error)
 
 	SaveModels(ctx context.Context, snap map[string][]byte, now time.Time) error
 	LoadModels(ctx context.Context) (map[string][]byte, error)

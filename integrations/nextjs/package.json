@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "tsc -p .",
-    "test": "tsc -p . --noEmit"
+    "test": "tsc -p . && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@doorkeep/verify": "workspace:*"

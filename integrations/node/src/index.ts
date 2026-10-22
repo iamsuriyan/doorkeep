@@ -43,6 +43,16 @@ export class DoorkeepUnavailableError extends Error {
   }
 }
 
+/** Parse a JSON body, reporting the status and a snippet of anything else. */
+async function readJSON(res: Response): Promise<unknown> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`HTTP ${res.status}, not JSON: ${text.slice(0, 80)}`);
+  }
+}
+
 export function createVerifier(cfg: VerifierConfig) {
   const endpoint = cfg.endpoint.replace(/\/+$/, "");
   const f = cfg.fetch ?? fetch;
@@ -71,22 +81,30 @@ export function createVerifier(cfg: VerifierConfig) {
       if (opts.action) body.expected_action = opts.action;
       if (opts.hostname) body.expected_hostname = opts.hostname;
       if (opts.remoteIp) body.remoteip = opts.remoteIp;
-      let res: Response;
+      // doorkeep always answers siteverify with JSON. Anything else (5xx, a
+      // proxy's HTML error page, a wrong endpoint) means it was not reached.
+      let result: VerifyResult;
       try {
-        res = await post("/v1/siteverify", body);
+        const res = await post("/v1/siteverify", body);
         if (res.status >= 500) throw new Error("HTTP " + res.status);
+        result = (await readJSON(res)) as VerifyResult;
+        if (typeof result.success !== "boolean") throw new Error("unexpected response from " + endpoint);
       } catch (e) {
         if (cfg.failMode === "open") return { success: true, "error-codes": [], failedOpen: true };
         throw new DoorkeepUnavailableError(e);
       }
-      return (await res.json()) as VerifyResult;
+      return result;
     },
 
     /** Label an event so the site's supervised model learns your ground truth. */
     async report(eventId: string, label: "bot" | "human"): Promise<void> {
-      const res = await post("/v1/report", { secret: cfg.secret, event_id: eventId, label });
-      const j = (await res.json()) as { success: boolean; "error-codes": string[] };
-      if (!j.success) throw new Error("doorkeep: report failed: " + j["error-codes"].join(","));
+      let j: { success: boolean; "error-codes"?: string[] };
+      try {
+        j = (await readJSON(await post("/v1/report", { secret: cfg.secret, event_id: eventId, label }))) as typeof j;
+      } catch (e) {
+        throw new DoorkeepUnavailableError(e);
+      }
+      if (!j.success) throw new Error("doorkeep: report failed: " + (j["error-codes"] || []).join(","));
     },
   };
 }

@@ -86,3 +86,17 @@ func TestWAV(t *testing.T) {
 		}
 	}
 }
+
+func TestNormaliseMapsOntoAlphabet(t *testing.T) {
+	for in, want := range map[string]string{" a-c d ": "ACD", "1i": "LL", "q": "4", "x7": "X7"} {
+		if got := Normalise(in); got != want {
+			t.Errorf("Normalise(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// Every mapping target is in the alphabet.
+	for _, c := range Normalise("1IQ") {
+		if !strings.ContainsRune(Alphabet, c) {
+			t.Errorf("%q maps outside the alphabet", c)
+		}
+	}
+}

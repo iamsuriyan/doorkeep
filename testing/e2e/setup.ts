@@ -1,6 +1,6 @@
 // Builds doorkeep, creates a site, starts doorkeep and the fixture site.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,7 @@ export default async function setup() {
   const env = { ...process.env, PATH: `${process.env.HOME}/.local/go/bin:${process.env.PATH}` };
   execFileSync("go", ["build", "-o", join(ROOT, "bin/doorkeep"), "./cmd/doorkeep"], { cwd: ROOT, env, stdio: "inherit" });
   const data = mkdtempSync(join(tmpdir(), "dk-e2e-"));
-  const dkEnv = { ...env, DOORKEEP_DATA_DIR: data, DOORKEEP_LISTEN: `127.0.0.1:${DK_PORT}`, DOORKEEP_LOG_LEVEL: "warn", DOORKEEP_IPDATA_AUTO_UPDATE: "false", DOORKEEP_TRUSTED_PROXIES: "127.0.0.1" };
+  const dkEnv = { ...env, DOORKEEP_DATA_DIR: data, DOORKEEP_LISTEN: `127.0.0.1:${DK_PORT}`, DOORKEEP_ADMIN_LISTEN: "public", DOORKEEP_LOG_LEVEL: "warn", DOORKEEP_IPDATA_AUTO_UPDATE: "false", DOORKEEP_TRUSTED_PROXIES: "127.0.0.1" };
   const out = execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", "e2e", "--origin", `http://localhost:${FIX_PORT}`], { env: dkEnv }).toString();
   const sitekey = /site key[^:]*:\s*(\S+)/.exec(out)![1];
   const secret = /secret[^:]*:\s*(\S+)/.exec(out)![1];
@@ -35,8 +35,8 @@ export default async function setup() {
   const nextOut = execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", "nextjs", "--origin", "http://localhost:18185"], { env: dkEnv }).toString();
   const nextKey = /site key[^:]*:\s*(\S+)/.exec(nextOut)![1];
   const nextSecret = /secret[^:]*:\s*(\S+)/.exec(nextOut)![1];
-  // Sites behind the real nginx and Caddy edge proxies (edge.spec.ts).
-  for (const port of [18183, 18184]) {
+  // Sites behind the real nginx, Caddy and Traefik edge proxies (edge.spec.ts).
+  for (const port of [18183, 18184, 18187]) {
     execFileSync(join(ROOT, "bin/doorkeep"), ["site", "create", "--name", `edge-${port}`, "--origin", `http://localhost:${port}`], { env: dkEnv });
   }
 
@@ -77,6 +77,8 @@ export default async function setup() {
       const k = /site key[^:]*:\s*(\S+)/.exec(o)![1], sec = /secret[^:]*:\s*(\S+)/.exec(o)![1];
       execFileSync(join(ROOT, "testing/wordpress/up.sh"), [k, sec], { stdio: "inherit" });
       process.env.DK_WP_READY = "1";
+      const wc = join(ROOT, "testing/wordpress/.wc");
+      if (existsSync(wc)) process.env.DK_WC_READY = readFileSync(wc, "utf8").trim(); // "<product id> <checkout page id>"
       wp = true;
     } catch (e) {
       console.warn("WordPress unavailable:", String(e).slice(0, 160));
@@ -87,7 +89,7 @@ export default async function setup() {
   const edge = join(__dirname, "edge");
   const containers: string[] = [];
   try {
-    execFileSync("docker", ["rm", "-f", "dk-e2e-nginx", "dk-e2e-caddy"], { stdio: "ignore" });
+    execFileSync("docker", ["rm", "-f", "dk-e2e-nginx", "dk-e2e-caddy", "dk-e2e-traefik"], { stdio: "ignore" });
   } catch {}
   try {
     execFileSync("docker", ["run", "-d", "--name", "dk-e2e-nginx", "--network", "host",
@@ -97,8 +99,19 @@ export default async function setup() {
     execFileSync("docker", ["run", "-d", "--name", "dk-e2e-caddy", "--network", "host",
       "-v", `${edge}/Caddyfile:/etc/caddy/Caddyfile:ro`, "-v", `${edge}/www:/srv:ro`, "caddy:2-alpine"], { stdio: "ignore" });
     containers.push("dk-e2e-caddy");
+    // Traefik runs the shipped integration file with only the upstream
+    // addresses swapped, so the test covers what users copy.
+    const traefikCfg = join(data, "traefik-dynamic.yml");
+    writeFileSync(traefikCfg, readFileSync(join(ROOT, "integrations/traefik/dynamic.yml"), "utf8")
+      .replaceAll("http://doorkeep:8080", `http://127.0.0.1:${DK_PORT}`)
+      .replaceAll("http://app:3000", "http://127.0.0.1:18188"));
+    execFileSync("docker", ["run", "-d", "--name", "dk-e2e-traefik", "--network", "host",
+      "-v", `${traefikCfg}:/etc/traefik/dynamic.yml:ro`, "traefik:v3.3",
+      "--entrypoints.web.address=:18187", "--providers.file.filename=/etc/traefik/dynamic.yml"], { stdio: "ignore" });
+    containers.push("dk-e2e-traefik");
     await waitFor("http://127.0.0.1:18183/_dk/healthz");
     await waitFor("http://127.0.0.1:18184/_dk/healthz");
+    await waitFor("http://127.0.0.1:18187/_dk/healthz");
     process.env.DK_EDGE = "1";
   } catch (e) {
     console.warn("edge proxies unavailable, edge tests will be skipped:", String(e).slice(0, 120));

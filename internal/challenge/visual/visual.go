@@ -61,11 +61,14 @@ func (g *Generator) Answer(nonceID string) string {
 	return b.String()
 }
 
-// Normalise canonicalises user input: case, spaces, and common confusions.
+// Normalise canonicalises user input: case, spaces, and the confusions
+// that map onto a character in the alphabet. Only L stands for the 1/I/L
+// family, and the bitmap "4" can look like a "q". Characters excluded from
+// the alphabet with no look-alike in it (0, O, S, B, ...) are left as typed
+// and simply do not match.
 func Normalise(s string) string {
 	s = strings.ToUpper(s)
-	// Q is not in the alphabet, and the bitmap "4" can look like a "q".
-	r := strings.NewReplacer(" ", "", "-", "", "0", "O", "1", "L", "I", "L", "5", "S", "8", "B", "Q", "4")
+	r := strings.NewReplacer(" ", "", "-", "", "1", "L", "I", "L", "Q", "4")
 	return r.Replace(strings.TrimSpace(s))
 }
 

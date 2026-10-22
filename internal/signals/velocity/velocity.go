@@ -1,7 +1,8 @@
 // Package velocity keeps in-process sliding-window counters per IP, /24,
-// fingerprint, canvas hash and site (design section 3.5). Keys are
-// pseudonymous hashes; nothing here is persisted. A cluster deployment
-// swaps this for the Redis implementation behind the same interface.
+// fingerprint, canvas hash and site (design section 3.5). Callers pass
+// pseudonymous keys (keyed hashes of addresses, never raw IPs); nothing here
+// is persisted. A cluster deployment swaps this for the Redis
+// implementation behind the same interface.
 package velocity
 
 import (
@@ -217,6 +218,36 @@ func (t *Tracker) Len() int {
 	return len(t.m)
 }
 
+// Op records one event for Key with optional distinct-count members.
+type Op struct {
+	Key     string
+	Members []string
+}
+
+// Query reads a window. An empty Prefix counts events; otherwise it counts
+// distinct members with that prefix.
+type Query struct {
+	Key    string
+	Dur    time.Duration
+	Prefix string
+}
+
+// Batch applies ops in order, then answers queries (results in query order).
+func (t *Tracker) Batch(ops []Op, qs []Query) []int {
+	for _, o := range ops {
+		t.Add(o.Key, o.Members...)
+	}
+	out := make([]int, len(qs))
+	for i, q := range qs {
+		if q.Prefix == "" {
+			out[i] = t.Count(q.Key, q.Dur)
+		} else {
+			out[i] = t.Distinct(q.Key, q.Dur, q.Prefix)
+		}
+	}
+	return out
+}
+
 // Counter is implemented by Tracker (in-process) and Redis (shared across
 // cluster nodes).
 type Counter interface {
@@ -224,6 +255,8 @@ type Counter interface {
 	Count(key string, d time.Duration) int
 	Distinct(key string, d time.Duration, prefix string) int
 	IntervalCV(key string) float64
+	// Batch does several adds and reads in one step (one Redis round trip).
+	Batch(ops []Op, qs []Query) []int
 	Len() int
 }
 

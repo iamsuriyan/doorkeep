@@ -1,0 +1,14 @@
+{
+  "name": "Real Chromium on Windows, mouse and keyboard",
+  "source": "Shape of internal/api humanPayload and the e2e real-Chromium baseline (risk 0)",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "auto.leaks": 0, "auto.headless_ua": 0, "net.ch_missing": 0, "net.ch_mismatch": 0, "net.ua_hdr_js_mismatch": 0,
+            "net.tz_ip_country_match": 1, "fp.feat_mismatch": 0, "fp.font_os_mismatch": 0, "fp.gpu_os_mismatch": 0,
+            "beh.total_events": 160, "beh.ptr_samples": 180, "beh.ptr_straightness": 0.42, "beh.ptr_interval_cv": 0.55, "beh.untrusted_frac": 0,
+            "beh.click_count": 3, "beh.click_center_frac": 0.3, "beh.click_dur_mean": 96,
+            "beh.key_count": 24, "beh.key_hold_mean": 88, "beh.key_hold_cv": 0.28, "beh.key_interval_cv": 0.6, "t.elapsed_s": 9.5},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "hardware", "net.asn_class": "isp"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 0, "fires": ["HUMAN_POINTER_EVIDENCE", "HUMAN_TYPING_EVIDENCE"]}
+}

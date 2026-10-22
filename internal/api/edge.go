@@ -66,7 +66,7 @@ func uaFamilyOf(ua string) string {
 
 // handleEdgeAuth answers the proxy's sub-request.
 func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
-	site, _ := s.siteForRequest(r)
+	site, origin := s.siteForRequest(r)
 	if site == nil {
 		http.Error(w, "unknown site", http.StatusForbidden)
 		return
@@ -79,19 +79,26 @@ func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if act, code := s.matchLists(r.Context(), site.ID, ip, info, "", r.UserAgent(), s.Now()); act == scoring.ListAllow {
+	now := s.Now()
+	act, code := s.matchLists(r.Context(), site.ID, ip, info, "", r.UserAgent(), now)
+	switch act {
+	case scoring.ListAllow:
 		w.Header().Set("X-Doorkeep-Reasons", code)
 		w.Header().Set("X-Doorkeep-Risk", "0")
 		w.WriteHeader(http.StatusOK)
 		return
-	} else if act == scoring.ListDeny {
+	case scoring.ListDeny:
 		http.Error(w, "denied", http.StatusForbidden)
 		return
 	}
 	if c, err := r.Cookie(edgeCookie); err == nil {
+		// Lists are checked on every request, so an always_challenge entry
+		// added after the cookie was minted still applies: only a cookie
+		// earned through a solved challenge satisfies it.
 		if cl, err := s.Ring.Open(c.Value, site.SiteKey); err == nil && cl.Action == edgeAction &&
 			cl.Outcome == string(scoring.Allow) && cl.UA == uaFamilyOf(r.UserAgent()) &&
-			(!site.StrictIP || cl.IP24 == s.Keys.IPHash(ip, time.Unix(cl.IssuedAt, 0))) {
+			(act != scoring.ListAlwaysChallenge || (cl.Challenge != "" && cl.Challenge != "none")) &&
+			(!site.StrictIP || s.Keys.IPHashMatches(ip, cl.IP24, time.Unix(cl.IssuedAt, 0), now)) {
 			w.Header().Set("X-Doorkeep-Risk", strconv.Itoa(cl.Risk))
 			w.Header().Set("X-Doorkeep-Reasons", strings.Join(cl.Reasons, ","))
 			w.WriteHeader(http.StatusOK)
@@ -105,7 +112,11 @@ func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
 		if rd == "" {
 			rd = r.Header.Get("X-Forwarded-Uri")
 		}
-		http.Redirect(w, r, "/_dk/challenge?rd="+url.QueryEscape(safeReturn(rd)), http.StatusFound)
+		// Absolute, on the site's own origin: Traefik's ForwardAuth resolves a
+		// relative Location against the auth server's address, which would
+		// send the browser to doorkeep's internal URL. origin comes from a
+		// registered site, so this is never an open redirect.
+		http.Redirect(w, r, origin+"/_dk/challenge?rd="+url.QueryEscape(safeReturn(rd)), http.StatusFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -114,11 +125,36 @@ func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 // safeReturn only allows same-site relative paths, never //host or schemes.
+// Browsers strip ASCII tab and newline from URLs and treat a backslash like
+// a slash, so "/\t/evil.com" or "/\\evil.com" would become "//evil.com":
+// any control character, space or backslash is rejected outright, and the
+// result must parse with no scheme or host.
 func safeReturn(rd string) string {
-	if !strings.HasPrefix(rd, "/") || strings.HasPrefix(rd, "//") || strings.HasPrefix(rd, "/\\") || strings.ContainsAny(rd, "\r\n") {
+	if !strings.HasPrefix(rd, "/") || strings.HasPrefix(rd, "//") || len(rd) > 2048 {
+		return "/"
+	}
+	for i := 0; i < len(rd); i++ {
+		if c := rd[i]; c <= 0x20 || c == 0x7f || c == '\\' {
+			return "/"
+		}
+	}
+	u, err := url.Parse(rd)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
 		return "/"
 	}
 	return rd
+}
+
+// returnParam reads the interstitial's rd parameter. doorkeep's own
+// redirects encode it (rd=%2Fsearch%3Fq%3D...), but nginx cannot encode, so
+// its error_page sends the raw $request_uri (rd=/search?q=a&b=c). A raw value
+// starts with "/" and runs to the end of the query string, so its own "&"
+// parameters are kept rather than split off.
+func returnParam(r *http.Request) string {
+	if raw, ok := strings.CutPrefix(r.URL.RawQuery, "rd=/"); ok {
+		return "/" + raw
+	}
+	return r.URL.Query().Get("rd")
 }
 
 var interstitial = template.Must(template.New("i").Parse(`<!doctype html>
@@ -178,7 +214,7 @@ func (s *Server) handleInterstitial(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; worker-src blob:; frame-ancestors 'none'; base-uri 'self'")
 	_ = interstitial.Execute(w, map[string]any{
-		"SiteKey": site.SiteKey, "Return": safeReturn(r.URL.Query().Get("rd")), "Accessibility": site.AccessibilityURL,
+		"SiteKey": site.SiteKey, "Return": safeReturn(returnParam(r)), "Accessibility": site.AccessibilityURL,
 	})
 }
 

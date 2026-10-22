@@ -84,7 +84,7 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 	}
 	got := s.Keys.AnswerMAC(n.ID, visual.Normalise(req.Answer))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(n.AnswerMAC)) != 1 {
-		s.Vel.Add("chfail:" + s.clientIP(r).String())
+		s.Vel.Add(s.challengeFailKey(s.clientIP(r)))
 		n2, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedVisual}, nonce.ChallengedVisual, now, func(x *nonce.Nonce) {
 			x.Attempts++
 			if x.Attempts >= visualAttempts {

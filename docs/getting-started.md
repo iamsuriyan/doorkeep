@@ -11,8 +11,10 @@ docker compose -f deploy/docker-compose.yml up -d
 Or the single binary (Linux, macOS, Windows; no dependencies):
 
 ```sh
-doorkeep serve            # listens on :8080, data in ./data
+doorkeep serve            # public API on :8080, dashboard on 127.0.0.1:8081, data in ./data
 ```
+
+Or as a hardened systemd service: [operations/systemd.md](operations/systemd.md).
 
 Secrets are generated on first run in the data directory. Back that
 directory up.
@@ -31,10 +33,10 @@ doorkeep admin create --user ops      # password on stdin
 ```
 
 `site create` prints a public site key and a secret that is shown once. The
-dashboard is at `/admin/` on the admin address: `http://127.0.0.1:8081/admin/`
-with Docker (published on localhost only). For the binary, set
-`DOORKEEP_ADMIN_LISTEN=127.0.0.1:8081` so the dashboard is not reachable
-through your sites' `/_dk/` proxies.
+dashboard is at `/admin/` on the admin address, `http://127.0.0.1:8081/admin/`
+by default (published on localhost only with Docker). It is never served on
+the public listener, so it cannot be reached through your sites' `/_dk/`
+proxies; reach it over SSH or a VPN.
 
 ## 4. Serve doorkeep on your origin
 

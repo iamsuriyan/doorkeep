@@ -191,5 +191,5 @@ Every event stores these bucketed features (never raw signals). Rules address th
 | `vel.canvas_distinct_ua_1h` | count | yes | Distinct UA families sharing this canvas hash in the last 1h |
 | `vel.site_submits_1h` | count | yes | Submits for this site in the last 1h |
 | `vel.ip_challenge_fail_1h` | count | yes | Failed challenges from this IP in the last hour |
-| `vel.site_rate_ratio` | float | yes | Site submits in the last 10 min relative to the 7-day baseline for this hour |
+| `vel.site_rate_ratio` | float | yes | Site submits in the last 10 min relative to the same hour on the previous 7 days (hourly rollups); unset with under 3 days of history |
 | `vel.fp_interval_cv` | float | yes | CV of inter-submit intervals for this fingerprint (>=10 events) |

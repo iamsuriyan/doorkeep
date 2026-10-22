@@ -4,8 +4,13 @@ FROM node:22-alpine AS snippet
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Every workspace manifest must be present for --frozen-lockfile to match the
+# lockfile; only the two web packages' dependencies are installed.
 COPY web/snippet/package.json web/snippet/
 COPY web/dashboard/package.json web/dashboard/
+COPY integrations/node/package.json integrations/node/
+COPY integrations/nextjs/package.json integrations/nextjs/
+COPY examples/nextjs-signup/package.json examples/nextjs-signup/
 COPY testing/e2e/package.json testing/e2e/
 RUN pnpm install --frozen-lockfile --filter @doorkeep/snippet --filter @doorkeep/dashboard
 COPY web/snippet web/snippet

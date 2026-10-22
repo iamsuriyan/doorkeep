@@ -3,6 +3,7 @@ package ipintel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,38 @@ type Source struct {
 	URL     string
 	File    string
 	License string
+}
+
+// maxDownload bounds one dataset. A response larger than this is treated as
+// an error rather than silently truncated.
+const maxDownload = 512 << 20
+
+// validators check a downloaded file before it replaces the previous good
+// copy, so a truncated or garbage response never wipes working data.
+var validators = map[string]func(path string) error{
+	FileASN: func(path string) error {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return empty().loadASN(f)
+	},
+	FileTor: func(path string) error {
+		if len(readTor(path)) == 0 {
+			return errors.New("no addresses in exit list")
+		}
+		return nil
+	},
+	FileDropV4: validDrop,
+	FileDropV6: validDrop,
+}
+
+func validDrop(path string) error {
+	if len(readDrop(path)) == 0 {
+		return errors.New("no prefixes in DROP list")
+	}
+	return nil
 }
 
 // Sources are the datasets `doorkeep ipdata update` fetches. Each is
@@ -50,13 +83,19 @@ func Update(ctx context.Context, dir string, client *http.Client) error {
 	manifest := map[string]any{"updated": time.Now().UTC().Format(time.RFC3339)}
 	var got []map[string]string
 	for _, s := range Sources {
-		if err := fetchTo(ctx, client, s.URL, filepath.Join(dir, s.File)); err != nil {
+		if err := fetchTo(ctx, client, s.URL, filepath.Join(dir, s.File), validators[s.File]); err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", s.Name, err))
 			continue
 		}
 		got = append(got, map[string]string{"name": s.Name, "url": s.URL, "license": s.License})
 	}
+	// Start from the previous file so a feed that fails this time keeps its
+	// last good ranges instead of disappearing.
 	crawlers := map[string][]string{}
+	if b, err := os.ReadFile(filepath.Join(dir, FileCrawlers)); err == nil {
+		_ = json.Unmarshal(b, &crawlers)
+	}
+	fetched := 0
 	for name, url := range crawlerFeeds {
 		var doc struct {
 			Prefixes []struct {
@@ -68,17 +107,24 @@ func Update(ctx context.Context, dir string, client *http.Client) error {
 			failed = append(failed, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
+		var ranges []string
 		for _, p := range doc.Prefixes {
 			if p.V4 != "" {
-				crawlers[name] = append(crawlers[name], p.V4)
+				ranges = append(ranges, p.V4)
 			}
 			if p.V6 != "" {
-				crawlers[name] = append(crawlers[name], p.V6)
+				ranges = append(ranges, p.V6)
 			}
 		}
+		if len(ranges) == 0 {
+			failed = append(failed, fmt.Sprintf("%s: no prefixes in response", name))
+			continue
+		}
+		crawlers[name] = ranges
+		fetched++
 		got = append(got, map[string]string{"name": name + " ranges", "url": url, "license": "Published by the operator for verification"})
 	}
-	if len(crawlers) > 0 {
+	if fetched > 0 {
 		b, _ := json.Marshal(crawlers)
 		if err := writeAtomic(filepath.Join(dir, FileCrawlers), b); err != nil {
 			failed = append(failed, "crawlers: "+err.Error())
@@ -94,7 +140,9 @@ func Update(ctx context.Context, dir string, client *http.Client) error {
 	return nil
 }
 
-func fetchTo(ctx context.Context, c *http.Client, url, path string) error {
+// fetchTo downloads url to a temporary file, validates it and only then
+// renames it over path.
+func fetchTo(ctx context.Context, c *http.Client, url, path string, validate func(string) error) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("User-Agent", "doorkeep-ipdata/1 (+https://github.com/iamsuriyan/doorkeep)")
 	res, err := c.Do(req)
@@ -110,12 +158,20 @@ func fetchTo(ctx context.Context, c *http.Client, url, path string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, io.LimitReader(res.Body, 512<<20)); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
+	n, err := io.Copy(f, io.LimitReader(res.Body, maxDownload+1))
+	if err == nil && n > maxDownload {
+		err = fmt.Errorf("response larger than %d MB", maxDownload>>20)
 	}
-	if err := f.Close(); err != nil {
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && validate != nil {
+		if verr := validate(tmp); verr != nil {
+			err = fmt.Errorf("invalid data, keeping previous file: %w", verr)
+		}
+	}
+	if err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)

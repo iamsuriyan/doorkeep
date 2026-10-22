@@ -97,7 +97,7 @@ func TestEdgeMode(t *testing.T) {
 		t.Fatalf("no cookie: %d", res.StatusCode)
 	}
 	res := h.edgeAuth("", map[string]string{"X-Doorkeep-Mode": "redirect", "Accept": "text/html"})
-	if res.StatusCode != 302 || res.Header.Get("Location") != "/_dk/challenge?rd="+url.QueryEscape("/search?q=doors") {
+	if res.StatusCode != 302 || res.Header.Get("Location") != "https://shop.example/_dk/challenge?rd="+url.QueryEscape("/search?q=doors") {
 		t.Fatalf("redirect mode: %d %s", res.StatusCode, res.Header.Get("Location"))
 	}
 	// The interstitial page renders for the site.

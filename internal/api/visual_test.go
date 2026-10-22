@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/iamsuriyan/doorkeep/internal/challenge/pow"
+	"github.com/iamsuriyan/doorkeep/internal/scoring"
 )
 
 // highBand builds a submit that lands at risk ~60: above the point where
@@ -116,5 +117,39 @@ func TestVisualAnswerBoundToNonce(t *testing.T) {
 	h.solvePoW(n2, o2)
 	if _, r := h.answer(n2, h.srv.Visual.Answer(n1)); r["status"] == "ok" {
 		t.Fatal("answer for one nonce accepted for another")
+	}
+}
+
+// In challenge_only mode block-band traffic, even with a proof floor, is
+// challenged rather than blocked, and must pass the visual challenge: proof
+// of work alone never clears it.
+func TestChallengeOnlyBlockBandGoesToVisual(t *testing.T) {
+	h := newHarness(t)
+	site, _ := h.srv.Store.SiteByID(t.Context(), "site1")
+	site.Mode = scoring.ModeChallengeOnly
+	if err := h.srv.Store.UpdateSite(t.Context(), site); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := h.session("signup")
+	h.clock = h.clock.Add(10 * time.Second)
+	p := humanPayloadAfter(n, 10*time.Second)
+	p.Auto.WD = 1 // navigator.webdriver: proof floor in the block band
+	p.Auto.CDP = true
+	p.FP.CV.H = n[:11]
+	_, out := h.post("/v1/submit", encode(p), browserHeaders())
+	if out["status"] != "challenge" || out["kind"] != "pow" {
+		t.Fatalf("challenge_only must challenge block-band risk: %v", out)
+	}
+	out = h.solvePoW(n, out)
+	if out["status"] != "challenge" || out["kind"] != "visual" {
+		t.Fatalf("proof of work alone cleared block-band risk: %v", out)
+	}
+	_, r := h.answer(n, h.srv.Visual.Answer(n))
+	if r["status"] != "ok" {
+		t.Fatalf("visual answer: %v", r)
+	}
+	v := h.verify(r["token"].(string), h.secret, nil)
+	if v["success"] != true {
+		t.Fatalf("challenge_only after visual: %v", v)
 	}
 }

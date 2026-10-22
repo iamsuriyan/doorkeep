@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,5 +182,104 @@ func TestAdminAndAuditAndLists(t *testing.T) {
 	}
 	if a, _ := db.Aggregates(ctx, "s1", now.Add(-2*time.Hour), now.Add(time.Hour)); len(a) != 1 {
 		t.Fatalf("%v", a)
+	}
+}
+
+func TestPurgeCanvas(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	now := time.Now()
+	db.CanvasSeen(ctx, "s1", "old", "seed", now.Add(-48*time.Hour), 24*time.Hour)
+	db.CanvasSeen(ctx, "s1", "new", "seed", now, 24*time.Hour)
+	if n, err := db.PurgeCanvas(ctx, now.Add(-24*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("purged %d %v", n, err)
+	}
+	// The recent record still detects a replay.
+	if c, _ := db.CanvasSeen(ctx, "s1", "new", "seed2", now, 24*time.Hour); !c {
+		t.Fatal("recent canvas record was purged")
+	}
+}
+
+func TestEventFilterEscapesWildcards(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	for i, code := range []string{"A_B", "AXB"} {
+		e := &store.Event{ID: fmt.Sprintf("evt_%d", i), SiteID: "s1", TS: time.Now(), Action: "a", Outcome: scoring.Allow, WouldBe: scoring.Allow,
+			Reasons: []scoring.Reason{{Code: code, Weight: 1}}, Features: scoring.NewFeatures(), FPHash: fmt.Sprintf("ab%d", i)}
+		if err := db.InsertEvent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := db.ListEvents(ctx, store.EventFilter{SiteID: "s1", Reason: "A_B"}); len(got) != 1 {
+		t.Fatalf("reason A_B matched %d events (underscore treated as a wildcard)", len(got))
+	}
+	if got, _ := db.ListEvents(ctx, store.EventFilter{SiteID: "s1", FPHash: "%"}); len(got) != 0 {
+		t.Fatalf("fp %% matched %d events", len(got))
+	}
+	if got, _ := db.ListEvents(ctx, store.EventFilter{SiteID: "s1", FPHash: "ab"}); len(got) != 2 {
+		t.Fatalf("fp prefix matched %d events", len(got))
+	}
+}
+
+func TestAdminTokensExpireAndRevoke(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	now := time.Now()
+	hash := strings.Repeat("ab", 32)
+	if err := db.CreateAdminToken(ctx, hash, "ci", now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateAdminToken(ctx, strings.Repeat("cd", 32), "forever", now, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.AdminTokenName(ctx, hash, now); err != nil || n != "ci" {
+		t.Fatalf("%q %v", n, err)
+	}
+	if _, err := db.AdminTokenName(ctx, hash, now.Add(2*time.Hour)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("expired token accepted")
+	}
+	toks, err := db.ListAdminTokens(ctx)
+	if err != nil || len(toks) != 2 || toks[0].ID != hash[:store.AdminTokenIDLen] || toks[0].LastUsedAt == nil || toks[1].ExpiresAt != nil {
+		t.Fatalf("%+v %v", toks, err)
+	}
+	if err := db.RevokeAdminToken(ctx, "%"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("wildcard revoke accepted")
+	}
+	if err := db.RevokeAdminToken(ctx, toks[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.AdminTokenName(ctx, strings.Repeat("cd", 32), now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("revoked token accepted")
+	}
+}
+
+func TestKV(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	if _, err := db.GetKV(ctx, "k"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("missing key found")
+	}
+	for _, v := range []string{"1", "2"} {
+		if err := db.PutKV(ctx, "k", v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, err := db.GetKV(ctx, "k"); err != nil || v != "2" {
+		t.Fatalf("%q %v", v, err)
+	}
+}
+
+func TestPurgeAggregates(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Hour)
+	for _, h := range []time.Time{now.AddDate(-2, 0, 0), now.Add(-time.Hour)} {
+		db.PutAggregate(ctx, "s1", store.Aggregate{Hour: h, Data: map[string]any{"total": 1}})
+	}
+	if n, err := db.PurgeAggregates(ctx, now.AddDate(-1, -1, 0)); err != nil || n != 1 {
+		t.Fatalf("purged %d %v", n, err)
+	}
+	if a, _ := db.Aggregates(ctx, "s1", now.AddDate(-3, 0, 0), now); len(a) != 1 {
+		t.Fatalf("left %d aggregates", len(a))
 	}
 }

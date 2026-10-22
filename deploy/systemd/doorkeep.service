@@ -1,0 +1,69 @@
+# doorkeep as a hardened systemd service.
+#
+#   install -m 0755 doorkeep /usr/local/bin/doorkeep
+#   install -D -m 0644 deploy/systemd/doorkeep.service /etc/systemd/system/doorkeep.service
+#   install -D -m 0640 your-config.yaml /etc/doorkeep/config.yaml   (optional)
+#   systemctl daemon-reload && systemctl enable --now doorkeep
+#
+# State (database, generated secrets, IP data) lives in /var/lib/doorkeep.
+# Run CLI commands as the service user against the same data directory:
+#   systemd-run --pty --wait -p DynamicUser=yes -p User=doorkeep -p StateDirectory=doorkeep \
+#     -E DOORKEEP_DATA_DIR=/var/lib/doorkeep /usr/local/bin/doorkeep site list
+# (the named dynamic user is shared, so files stay owned by the service).
+[Unit]
+Description=doorkeep bot and abuse risk scoring
+Documentation=https://github.com/iamsuriyan/doorkeep
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/doorkeep serve
+Environment=DOORKEEP_DATA_DIR=/var/lib/doorkeep
+Environment=DOORKEEP_LISTEN=:8080
+Environment=DOORKEEP_ADMIN_LISTEN=127.0.0.1:8081
+# Uncomment to use a config file (values in it are overridden by the
+# environment above).
+#Environment=DOORKEEP_CONFIG=/etc/doorkeep/config.yaml
+Restart=on-failure
+RestartSec=2s
+
+# Isolation: a dynamic (not persistent) user, named so CLI runs can share
+# it, and a private writable state directory only.
+DynamicUser=yes
+User=doorkeep
+StateDirectory=doorkeep
+StateDirectoryMode=0700
+ConfigurationDirectory=doorkeep
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+# Binding :443 directly (TLS termination) needs this one capability:
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

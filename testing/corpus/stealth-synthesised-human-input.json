@@ -1,0 +1,12 @@
+{
+  "name": "Stealth plugin with synthesised human-like input (known miss)",
+  "source": "testing/e2e/tests/stealth.spec.ts headed variant; recorded in known_misses.yaml as allowed at risk 25",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "fp.font_os_mismatch": 1, "beh.total_events": 140, "beh.ptr_samples": 120, "beh.ptr_straightness": 0.7,
+            "beh.ptr_interval_cv": 0.4, "beh.untrusted_frac": 0, "beh.key_count": 20, "beh.key_hold_cv": 0.3, "beh.key_interval_cv": 0.5, "t.elapsed_s": 14},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "allow", "min_risk": 25, "max_risk": 25, "fires": ["FONT_OS_MISMATCH"], "not_fires": ["HUMAN_POINTER_EVIDENCE", "HUMAN_TYPING_EVIDENCE"],
+             "note": "Documents the known miss: the device contradiction must keep synthesised human evidence from cancelling it, so risk stays at 25, not 0."}
+}

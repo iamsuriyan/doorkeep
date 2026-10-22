@@ -204,6 +204,9 @@ func (h *HBOS) probLocked(feature, key string) float64 {
 // contributing features. Risk is the score's position in the site's own
 // distribution: below the 90th percentile is 0, the 99th percentile is 100.
 func (h *HBOS) Score(f scoring.Features, global *HBOS) (int, []Contribution) {
+	if global == h {
+		global = nil // the global model scoring itself; locking it twice would deadlock
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.Raw < MinObservations {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iamsuriyan/doorkeep/internal/config"
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
 	"github.com/iamsuriyan/doorkeep/internal/scoring"
 	"github.com/iamsuriyan/doorkeep/internal/scoring/model"
@@ -23,7 +25,12 @@ import (
 func (s *Server) adminRoutes(m *http.ServeMux) {
 	a := s.adminAuth
 	m.HandleFunc("GET /admin/", s.handleDashboard)
-	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/admin/", http.StatusFound) })
+	// A relative Location (set directly: http.Redirect would make it
+	// absolute) keeps working when a proxy mounts doorkeep under a prefix.
+	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "admin/")
+		w.WriteHeader(http.StatusFound)
+	})
 	m.HandleFunc("POST /admin/v1/login", s.handleLogin)
 	m.HandleFunc("POST /admin/v1/logout", s.handleLogout)
 	m.HandleFunc("GET /admin/v1/me", a(s.handleMe))
@@ -50,6 +57,9 @@ func (s *Server) adminRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /admin/v1/audit", a(s.adminAudit))
 	m.HandleFunc("GET /admin/v1/ipdata", a(s.adminIPData))
 	m.HandleFunc("GET /admin/v1/features", a(s.adminFeatures))
+	m.HandleFunc("GET /admin/v1/tokens", a(s.adminListTokens))
+	m.HandleFunc("POST /admin/v1/tokens", a(s.adminCreateToken))
+	m.HandleFunc("DELETE /admin/v1/tokens/{id}", a(s.adminRevokeToken))
 }
 
 // problem writes an RFC 9457 problem+json error.
@@ -57,6 +67,13 @@ func problem(w http.ResponseWriter, status int, typ, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"type": "https://doorkeep.dev/problems/" + typ, "title": http.StatusText(status), "status": status, "detail": detail})
+}
+
+// internalError logs err with the request path and returns a generic
+// problem, so database or file errors never reach the client.
+func (s *Server) internalError(w http.ResponseWriter, r *http.Request, err error) {
+	s.Log.Error("admin request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	problem(w, http.StatusInternalServerError, "internal", "internal error; see the server log")
 }
 
 func decodeJSON(r *http.Request, v any, max int64) error {
@@ -83,7 +100,7 @@ func (s *Server) site(w http.ResponseWriter, r *http.Request) *store.Site {
 func (s *Server) adminListSites(w http.ResponseWriter, r *http.Request) {
 	sites, err := s.Store.ListSites(r.Context())
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if sites == nil {
@@ -198,7 +215,7 @@ func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
 	secret := "dk_sk_" + randToken(32)
 	site.SecretHash = pseudo.SecretHash(secret)
 	if err := s.Store.CreateSite(r.Context(), site); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r, "site.create", site.ID, map[string]any{"name": site.Name, "origins": site.Origins})
@@ -227,7 +244,7 @@ func (s *Server) adminPatchSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.UpdateSite(r.Context(), site); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r, "site.update", site.ID, map[string]any{"before": before, "after": site})
@@ -242,11 +259,64 @@ func (s *Server) adminRotateSecret(w http.ResponseWriter, r *http.Request) {
 	secret := "dk_sk_" + randToken(32)
 	site.SecretHash = pseudo.SecretHash(secret)
 	if err := s.Store.UpdateSite(r.Context(), site); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r, "site.rotate_secret", site.ID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"secret": secret})
+}
+
+// ---------------- bearer tokens ----------------
+
+func (s *Server) adminListTokens(w http.ResponseWriter, r *http.Request) {
+	toks, err := s.Store.ListAdminTokens(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if toks == nil {
+		toks = []store.AdminToken{}
+	}
+	writeJSON(w, http.StatusOK, toks)
+}
+
+func (s *Server) adminCreateToken(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name    string `json:"name"`
+		TTLDays *int   `json:"ttl_days"` // 0 = never expires; omitted = default
+	}
+	if err := decodeJSON(r, &in, 4096); err != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 64 {
+		problem(w, http.StatusBadRequest, "bad-request", "name (1-64 characters) is required")
+		return
+	}
+	ttl := DefaultAdminTokenTTL
+	if in.TTLDays != nil {
+		if *in.TTLDays < 0 || *in.TTLDays > 3650 {
+			problem(w, http.StatusBadRequest, "invalid", "ttl_days must be between 0 and 3650")
+			return
+		}
+		ttl = time.Duration(*in.TTLDays) * 24 * time.Hour
+	}
+	tok, err := NewAdminToken(r.Context(), s.Store, strings.TrimSpace(in.Name), s.Now(), ttl)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r, "token.create", strings.TrimSpace(in.Name), map[string]any{"id": sha256hex(tok)[:store.AdminTokenIDLen], "ttl_days": int(ttl.Hours() / 24)})
+	writeJSON(w, http.StatusCreated, map[string]string{"token": tok, "id": sha256hex(tok)[:store.AdminTokenIDLen]})
+}
+
+func (s *Server) adminRevokeToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.Store.RevokeAdminToken(r.Context(), id); errors.Is(err, store.ErrNotFound) {
+		problem(w, http.StatusNotFound, "not-found", "unknown token")
+		return
+	} else if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r, "token.revoke", id, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------- events ----------------
@@ -314,7 +384,7 @@ func (s *Server) adminListEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	evs, err := s.Store.ListEvents(r.Context(), f)
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	out := make([]eventView, 0, len(evs))
@@ -350,7 +420,7 @@ func (s *Server) adminDeleteEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.DeleteEvent(r.Context(), e.ID); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r, "event.delete", site.ID+"/"+e.ID, nil)
@@ -370,7 +440,7 @@ func (s *Server) adminLabelEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.LabelEvent(r.Context(), e.ID, in.Label, "dashboard"); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if in.Label != "" {
@@ -389,7 +459,7 @@ func (s *Server) adminListLists(w http.ResponseWriter, r *http.Request) {
 	}
 	l, err := s.Store.ListEntries(r.Context(), site.ID, s.Now())
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if l == nil {
@@ -424,7 +494,7 @@ func (s *Server) adminAddList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.AddListEntry(r.Context(), &e); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r, "list.add", site.ID, map[string]any{"entry": e})
@@ -464,7 +534,7 @@ func (s *Server) adminDeleteList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.DeleteListEntry(r.Context(), site.ID, id); err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r, "list.delete", site.ID, map[string]any{"id": id})
@@ -502,29 +572,56 @@ func (s *Server) adminPromote(w http.ResponseWriter, r *http.Request) {
 // ---------------- privacy, audit, ipdata, features ----------------
 
 func (s *Server) adminPrivacy(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"event_retention_days": int(s.Cfg.EventRetention.Hours() / 24),
-		"data_map":             dataMap,
-		"never_collected":      []string{"geolocation", "media device labels", "battery", "clipboard", "form values", "page URL beyond origin", "cookies (none set by default)"},
-		"pseudonymisation": map[string]string{
-			"fingerprint": "HMAC per site per month; the same device cannot be linked across sites or months",
-			"ip":          "HMAC of the /24 (IPv4) or /48 (IPv6) per day; raw IPs live in memory for at most an hour",
-		},
-	})
+	writeJSON(w, http.StatusOK, PrivacyReport(s.Cfg))
 }
 
-var dataMap = []map[string]string{
-	{"item": "IP address", "at_rest": "day-keyed HMAC of /24 or /48; ASN; country", "purpose": "abuse velocity, network reputation", "retention": "events 30 d, counters 1 h", "gdpr": "personal data; legitimate interest, Art. 6(1)(f), Recital 49", "dpdp": "personal data processed for the purpose in the site's notice; self-hosting keeps it in-country"},
-	{"item": "Browser fingerprint", "at_rest": "per-site per-month HMAC; bucketed features", "purpose": "consistency checks, device velocity", "retention": "30 d", "gdpr": "pseudonymised, purpose-limited", "dpdp": "minimisation by bucketing"},
-	{"item": "Behaviour statistics", "at_rest": "aggregates only (no coordinates or keys)", "purpose": "bot/human discrimination", "retention": "30 d", "gdpr": "not identifying alone", "dpdp": "as GDPR"},
-	{"item": "Risk, outcome, reasons", "at_rest": "plain", "purpose": "security decision, operator audit", "retention": "30 d; hourly aggregates 13 months", "gdpr": "challenge path and accessibility link keep a human route (Art. 22)", "dpdp": "sites should disclose automated abuse screening"},
-	{"item": "Operator labels", "at_rest": "with the event", "purpose": "model training", "retention": "with the event", "gdpr": "", "dpdp": ""},
+// DataMapItem is one row of the privacy data map.
+type DataMapItem struct {
+	Item      string `json:"item"`
+	AtRest    string `json:"at_rest"`
+	Purpose   string `json:"purpose"`
+	Retention string `json:"retention"`
+	GDPR      string `json:"gdpr"`
+	DPDP      string `json:"dpdp"`
+}
+
+// Privacy is the data map for operators' records of processing (GDPR Art.
+// 30, DPDP notices). It is generated from the running configuration.
+type Privacy struct {
+	EventRetentionDays int               `json:"event_retention_days"`
+	DataMap            []DataMapItem     `json:"data_map"`
+	NeverCollected     []string          `json:"never_collected"`
+	Pseudonymisation   map[string]string `json:"pseudonymisation"`
+}
+
+// PrivacyReport describes what this instance stores, for the dashboard and
+// `doorkeep export-datamap`.
+func PrivacyReport(cfg *config.Config) Privacy {
+	days := int(cfg.EventRetention.Hours() / 24)
+	ev := fmt.Sprintf("%d d", days)
+	return Privacy{
+		EventRetentionDays: days,
+		DataMap: []DataMapItem{
+			{"IP address", "day-keyed HMAC of the /24 or /48; ASN; country", "abuse velocity, network reputation", "events " + ev + "; velocity counters (keyed hashes) 1 h", "personal data; legitimate interest, Art. 6(1)(f), Recital 49", "personal data processed for the purpose in the site's notice; self-hosting keeps it in-country"},
+			{"Browser fingerprint", "per-site per-month HMAC; bucketed features", "consistency checks, device velocity", ev, "pseudonymised, purpose-limited", "minimisation by bucketing"},
+			{"Behaviour statistics", "aggregates only (no coordinates or keys)", "bot/human discrimination", ev, "not identifying alone", "as GDPR"},
+			{"Risk, outcome, reasons", "plain", "security decision, operator audit", ev + "; hourly aggregates 13 months", "challenge path and accessibility link keep a human route (Art. 22)", "sites should disclose automated abuse screening"},
+			{"Operator labels", "with the event", "model training", "with the event", "", ""},
+			{"Canvas replay records", "keyed hash of the session seed and seeded canvas hash", "replay detection", fmt.Sprintf("%d h", int(CanvasReplayWindow.Hours())), "pseudonymous, not linkable across sessions", "as GDPR"},
+			{"Admin accounts and audit log", "argon2id password hashes; SHA-256 of session and API tokens", "operator access control", "until deleted; audit log kept", "operators' own data", "as GDPR"},
+		},
+		NeverCollected: []string{"geolocation", "media device labels", "battery", "clipboard", "form values", "page URL beyond origin", "cookies (none set by default; edge mode sets one functional cookie)"},
+		Pseudonymisation: map[string]string{
+			"fingerprint": "HMAC per site per month; the same device cannot be linked across sites or months",
+			"ip":          "HMAC of the /24 (IPv4) or /48 (IPv6) per day; raw IPs are never written to disk, and velocity counters key on hashes held for at most an hour",
+		},
+	}
 }
 
 func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 	l, err := s.Store.ListAudit(r.Context(), 200)
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if l == nil {

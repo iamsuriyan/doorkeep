@@ -1,0 +1,11 @@
+{
+  "name": "Keyboard-only or screen-reader user, Firefox",
+  "source": "Design principle: keyboard-only users are not bots",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 42, "beh.ptr_samples": 0, "beh.click_count": 0, "beh.key_count": 42, "beh.key_hold_mean": 85,
+            "beh.key_hold_cv": 0.3, "beh.key_interval_cv": 0.5, "beh.untrusted_frac": 0, "t.elapsed_s": 25},
+    "cat": {"fp.ua_family": "firefox", "fp.os_family": "linux", "auto.eng": "spidermonkey", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 0, "not_fires": ["CLICK_WITHOUT_MOVEMENT", "NO_INTERACTION_FAST_SUBMIT"]}
+}

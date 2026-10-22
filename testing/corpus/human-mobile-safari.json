@@ -1,0 +1,11 @@
+{
+  "name": "Safari on iPhone, touch and on-screen keyboard",
+  "source": "Mobile human baseline; iOS browsers all run JavaScriptCore",
+  "action": "checkout",
+  "features": {
+    "num": {"auto.wd": 0, "fp.touch_points": 5, "fp.mobile_no_touch": 0, "beh.total_events": 70, "beh.ptr_samples": 0,
+            "beh.key_count": 14, "beh.key_hold_cv": 0.35, "beh.key_interval_cv": 0.55, "beh.untrusted_frac": 0, "t.elapsed_s": 31},
+    "cat": {"fp.ua_family": "safari", "fp.os_family": "ios", "auto.eng": "jsc", "fp.gpu_class": "hardware", "net.asn_class": "mobile"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 0, "not_fires": ["UA_ENGINE_MISMATCH", "MOBILE_WITHOUT_TOUCH"]}
+}

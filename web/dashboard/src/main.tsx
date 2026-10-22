@@ -105,6 +105,7 @@ function Shell({ actor, route, sites, children, onLogout }: { actor: string; rou
         <div class="nav-label">Instance</div>
         <div class="nav">
           <a href="#/privacy" aria-current={cur("#/privacy")}>Privacy</a>
+          <a href="#/tokens" aria-current={cur("#/tokens")}>API tokens</a>
           <a href="#/audit" aria-current={cur("#/audit")}>Audit log</a>
         </div>
         <div class="side-foot">
@@ -651,6 +652,87 @@ function Audit() {
   );
 }
 
+// ---------------- API tokens ----------------
+
+interface AdminToken { id: string; name: string; created_at: string; expires_at?: string; last_used_at?: string }
+
+function Tokens() {
+  const [toks, err, reload] = useLoad(() => api<AdminToken[]>("GET", "/tokens"), []);
+  const [name, setName] = useState("");
+  const [days, setDays] = useState("90");
+  const [created, setCreated] = useState<string | null>(null);
+  const [formErr, setFormErr] = useState("");
+  const when = (t?: string) => (t ? new Date(t).toLocaleString() : "");
+  const create = async (e: SubmitEvent) => {
+    e.preventDefault();
+    setFormErr("");
+    try {
+      const r = await api<{ token: string }>("POST", "/tokens", { name, ttl_days: Number(days) });
+      setCreated(r.token);
+      setName("");
+      reload();
+    } catch (x: any) {
+      setFormErr(x.message);
+    }
+  };
+  const revoke = async (t: AdminToken) => {
+    if (!confirm(`Revoke the token "${t.name}"? Anything using it stops working immediately.`)) return;
+    try {
+      await api("DELETE", "/tokens/" + t.id);
+      reload();
+    } catch (x: any) {
+      setFormErr(x.message);
+    }
+  };
+  return (
+    <div class="grid">
+      <div class="head"><h1>API tokens</h1></div>
+      <p class="secondary" style={{ margin: 0 }}>Bearer tokens for automation against <code>/admin/v1</code> (Terraform, scripts). They act with full admin rights; give each use its own token so you can revoke it alone.</p>
+      {created && (
+        <div class="notice ok grid" role="status">
+          <h2 style={{ margin: 0 }}>Copy the token now</h2>
+          <p style={{ margin: 0 }}>It is shown once. Send it as <code>Authorization: Bearer …</code>.</p>
+          <div class="secret">{created}</div>
+          <div><button onClick={() => setCreated(null)}>Done</button></div>
+        </div>
+      )}
+      <Err msg={err} />
+      <div class="card" style={{ padding: "8px", overflowX: "auto" }}>
+        {toks && toks.length === 0 && <div class="empty">No tokens.</div>}
+        {toks && toks.length > 0 && (
+          <table>
+            <thead><tr><th>Name</th><th>ID</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+            <tbody>{toks.map((t) => {
+              const expired = t.expires_at && new Date(t.expires_at) < new Date();
+              return (
+                <tr key={t.id}>
+                  <td><b>{t.name}</b></td>
+                  <td><code>{t.id}</code></td>
+                  <td class="secondary">{when(t.created_at)}</td>
+                  <td class="secondary">{t.expires_at ? (expired ? <span class="badge block">expired</span> : when(t.expires_at)) : "never"}</td>
+                  <td class="secondary">{when(t.last_used_at) || "never"}</td>
+                  <td><button class="small danger" onClick={() => revoke(t)} aria-label={`Revoke ${t.name}`}>Revoke</button></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        )}
+      </div>
+      <form class="card grid" onSubmit={create} style={{ maxWidth: "620px" }}>
+        <h2>New token</h2>
+        <label class="field">Name<input value={name} onInput={(e) => setName(e.currentTarget.value)} placeholder="terraform" maxLength={64} required /></label>
+        <label class="field">Expires after
+          <select value={days} onChange={(e) => setDays(e.currentTarget.value)}>
+            <option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="0">never</option>
+          </select>
+        </label>
+        <Err msg={formErr} />
+        <div><button class="primary">Create token</button></div>
+      </form>
+    </div>
+  );
+}
+
 // ---------------- app ----------------
 
 function App() {
@@ -664,6 +746,7 @@ function App() {
   let body: any;
   if (route[0] === "privacy") body = <Privacy />;
   else if (route[0] === "audit") body = <Audit />;
+  else if (route[0] === "tokens") body = <Tokens />;
   else if (route[0] === "sites" && route[1]) {
     const s = list.find((x) => x.id === route[1]);
     const tab = (route[2] || "overview").split("?")[0];

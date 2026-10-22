@@ -11,12 +11,18 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/signals/payload"
 )
 
-var chromium = map[string]bool{"chrome": true, "edge": true, "opera": true, "samsung": true, "brave": true}
+// Brave reports itself as Chrome, so it is covered by "chrome".
+var chromium = map[string]bool{"chrome": true, "edge": true, "opera": true, "samsung": true}
 
 // Secure reports whether the browser would treat the request as a secure
-// context, which gates Client Hints and Fetch Metadata.
-func Secure(r *http.Request) bool {
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+// context, which gates Client Hints and Fetch Metadata. X-Forwarded-Proto
+// is honoured only when trustProxy says the request came from a configured
+// proxy; otherwise any client could switch these checks on or off.
+func Secure(r *http.Request, trustProxy bool) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if trustProxy && strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https") {
 		return true
 	}
 	host := r.Host
@@ -26,8 +32,9 @@ func Secure(r *http.Request) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "[::1]" || strings.HasSuffix(host, ".localhost")
 }
 
-// Analyze sets net.* header features on f.
-func Analyze(f scoring.Features, r *http.Request, jsUA string, langs []string, c payload.Classified) {
+// Analyze sets net.* header features on f. trustProxy reports whether r
+// came from a trusted proxy (see Secure).
+func Analyze(f scoring.Features, r *http.Request, trustProxy bool, jsUA string, langs []string, c payload.Classified) {
 	hdrUA := r.Header.Get("User-Agent")
 	fam, major := payload.UAFamily(hdrUA)
 	f.SetCat("net.ua_hdr_family", fam)
@@ -44,7 +51,7 @@ func Analyze(f scoring.Features, r *http.Request, jsUA string, langs []string, c
 		f.Set("net.http_version", 3)
 	}
 
-	secure := Secure(r)
+	secure := Secure(r, trustProxy)
 	chUA := r.Header.Get("Sec-CH-UA")
 	if secure {
 		if chromium[fam] && major >= 89 && chUA == "" {

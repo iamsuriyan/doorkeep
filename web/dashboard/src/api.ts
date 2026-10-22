@@ -9,7 +9,9 @@ export class ApiError extends Error {
 }
 
 export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch("/admin/v1" + path, {
+  // Relative to the dashboard page (always served at .../admin/), so the
+  // dashboard also works when a proxy mounts it under a path prefix.
+  const res = await fetch("v1" + path, {
     method,
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(csrf && method !== "GET" ? { "X-CSRF-Token": csrf } : {}) },

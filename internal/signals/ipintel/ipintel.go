@@ -12,6 +12,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"os"
@@ -109,23 +110,43 @@ var (
 	mobileWords = []string{"MOBILE", "CELLULAR", "WIRELESS", "LTE", "JIO", "T-MOBILE", "VERIZON-WIRELESS"}
 )
 
+// containsWord matches w in u; words of four letters or fewer must stand
+// alone (between non-alphanumerics), so "LTE" does not match "ALTERNET".
+func containsWord(u, w string) bool {
+	if len(w) > 4 {
+		return strings.Contains(u, w)
+	}
+	alnum := func(c byte) bool { return c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' }
+	for i := 0; ; {
+		j := strings.Index(u[i:], w)
+		if j < 0 {
+			return false
+		}
+		j += i
+		if (j == 0 || !alnum(u[j-1])) && (j+len(w) == len(u) || !alnum(u[j+len(w)])) {
+			return true
+		}
+		i = j + 1
+	}
+}
+
 func classify(asn uint32, desc string, hosting map[uint32]bool) string {
 	if hosting[asn] {
 		return "hosting"
 	}
 	u := strings.ToUpper(desc)
 	for _, w := range eduWords {
-		if strings.Contains(u, w) {
+		if containsWord(u, w) {
 			return "edu"
 		}
 	}
 	for _, w := range govWords {
-		if strings.Contains(u, w) {
+		if containsWord(u, w) {
 			return "gov"
 		}
 	}
 	for _, w := range mobileWords {
-		if strings.Contains(u, w) {
+		if containsWord(u, w) {
 			return "mobile"
 		}
 	}
@@ -159,47 +180,39 @@ const (
 	FileCrawlers = "crawlers.json"
 )
 
-// Load reads whatever files exist in dir. Missing files are skipped; the
-// returned DB is always usable.
+// Load reads whatever files exist in dir. Missing files are skipped and a
+// file that fails to parse does not discard the others: the returned DB is
+// always usable, and err (if any) describes what was skipped.
 func Load(dir string) (*DB, error) {
 	d := empty()
 	d.Loaded = time.Now()
+	var errs []error
 	if f, err := os.Open(filepath.Join(dir, FileASN)); err == nil {
-		err = d.loadASN(f)
+		asn := empty()
+		err = asn.loadASN(f)
 		f.Close()
 		if err != nil {
-			return nil, err
+			errs = append(errs, fmt.Errorf("%s: %w", FileASN, err))
+		} else {
+			d.v4, d.v6, d.desc = asn.v4, asn.v6, asn.desc
+			d.Sources = append(d.Sources, "iptoasn.com (PDDL)")
 		}
-		d.Sources = append(d.Sources, "iptoasn.com (PDDL)")
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, FileTor)); err == nil {
-		for _, l := range strings.Split(string(b), "\n") {
-			if a, err := netip.ParseAddr(strings.TrimSpace(l)); err == nil {
-				d.tor[a.Unmap()] = true
-			}
-		}
+	if tor := readTor(filepath.Join(dir, FileTor)); len(tor) > 0 {
+		d.tor = tor
 		d.Sources = append(d.Sources, "Tor Project exit list")
 	}
 	for _, fn := range []string{FileDropV4, FileDropV6} {
-		if b, err := os.ReadFile(filepath.Join(dir, fn)); err == nil {
-			for _, l := range strings.Split(string(b), "\n") {
-				var row struct {
-					CIDR string `json:"cidr"`
-				}
-				if json.Unmarshal([]byte(l), &row) == nil && row.CIDR != "" {
-					if p, err := netip.ParsePrefix(row.CIDR); err == nil {
-						d.drop = append(d.drop, p.Masked())
-					}
-				}
-			}
-		}
+		d.drop = append(d.drop, readDrop(filepath.Join(dir, fn))...)
 	}
 	if len(d.drop) > 0 {
 		d.Sources = append(d.Sources, "Spamhaus DROP")
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, FileCrawlers)); err == nil {
 		var m map[string][]string
-		if json.Unmarshal(b, &m) == nil {
+		if err := json.Unmarshal(b, &m); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", FileCrawlers, err))
+		} else {
 			for name, list := range m {
 				for _, s := range list {
 					if p, err := netip.ParsePrefix(s); err == nil {
@@ -210,7 +223,42 @@ func Load(dir string) (*DB, error) {
 			d.Sources = append(d.Sources, "published crawler ranges")
 		}
 	}
-	return d, nil
+	return d, errors.Join(errs...)
+}
+
+// readTor parses the exit list (one address per line).
+func readTor(path string) map[netip.Addr]bool {
+	out := map[netip.Addr]bool{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if a, err := netip.ParseAddr(strings.TrimSpace(l)); err == nil {
+			out[a.Unmap()] = true
+		}
+	}
+	return out
+}
+
+// readDrop parses Spamhaus DROP (one JSON object per line).
+func readDrop(path string) []netip.Prefix {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []netip.Prefix
+	for _, l := range strings.Split(string(b), "\n") {
+		var row struct {
+			CIDR string `json:"cidr"`
+		}
+		if json.Unmarshal([]byte(l), &row) == nil && row.CIDR != "" {
+			if p, err := netip.ParsePrefix(row.CIDR); err == nil {
+				out = append(out, p.Masked())
+			}
+		}
+	}
+	return out
 }
 
 // loadASN parses iptoasn's TSV: start, end, asn, country, description.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/iamsuriyan/doorkeep/internal/store"
@@ -106,35 +107,63 @@ func aggFromMap(m map[string]any) *agg {
 	return a
 }
 
-// Rollup aggregates the given completed hours for every site. Idempotent;
-// the janitor re-runs it over recent hours so late labels and
-// verifications are reflected.
-func (s *Server) Rollup(ctx context.Context, hours int) error {
+// AggregateRetention is how long hourly aggregates (counts only, no
+// per-visitor data) are kept for charts after events are purged.
+const AggregateRetention = 395 * 24 * time.Hour // 13 months
+
+// rollupMarkKey stores the start of the first hour not yet aggregated.
+const rollupMarkKey = "rollup_hwm"
+
+// rollupMark returns the stored high-water mark, or the zero time.
+func (s *Server) rollupMark(ctx context.Context) time.Time {
+	v, err := s.Store.GetKV(ctx, rollupMarkKey)
+	if err != nil {
+		return time.Time{}
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(n, 0).UTC()
+}
+
+// Rollup aggregates every completed hour since the last run (after downtime
+// too, back to event retention), and always re-runs the last `recent` hours
+// so late labels and verifications are reflected. Idempotent.
+func (s *Server) Rollup(ctx context.Context, recent int) error {
 	sites, err := s.Store.ListSites(ctx)
 	if err != nil {
 		return err
 	}
 	end := s.Now().UTC().Truncate(time.Hour)
+	start := end.Add(-time.Duration(recent) * time.Hour)
+	if mark := s.rollupMark(ctx); mark.IsZero() || mark.Before(start) {
+		oldest := end.Add(-s.Cfg.EventRetention).Truncate(time.Hour)
+		if mark.IsZero() || mark.Before(oldest) {
+			mark = oldest
+		}
+		start = mark
+	}
 	for _, site := range sites {
-		for h := 1; h <= hours; h++ {
-			start := end.Add(-time.Duration(h) * time.Hour)
-			a := newAgg()
-			err := s.Store.StreamEvents(ctx, store.EventFilter{SiteID: site.ID, Since: start, Until: start.Add(time.Hour)}, func(e *store.Event) error {
-				a.add(e)
-				return nil
-			})
-			if err != nil {
-				return err
+		hours := map[int64]*agg{}
+		err := s.Store.StreamEvents(ctx, store.EventFilter{SiteID: site.ID, Since: start, Until: end}, func(e *store.Event) error {
+			h := e.TS.UTC().Truncate(time.Hour).Unix()
+			if hours[h] == nil {
+				hours[h] = newAgg()
 			}
-			if a.Total == 0 {
-				continue
-			}
-			if err := s.Store.PutAggregate(ctx, site.ID, store.Aggregate{Hour: start, Data: a.toMap()}); err != nil {
+			hours[h].add(e)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for h, a := range hours {
+			if err := s.Store.PutAggregate(ctx, site.ID, store.Aggregate{Hour: time.Unix(h, 0).UTC(), Data: a.toMap()}); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	return s.Store.PutKV(ctx, rollupMarkKey, strconv.FormatInt(end.Unix(), 10))
 }
 
 type kv struct {
@@ -160,8 +189,9 @@ func top(m map[string]int, n int) []kv {
 }
 
 // adminStats returns an hourly series plus breakdowns for a range (default
-// 24h, up to 90 days). Completed hours come from aggregates; the current
-// hour is computed live.
+// 24h, up to 90 days). Hours before the rollup high-water mark come from
+// aggregates; only later hours (normally just the current one) are computed
+// from events.
 func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	site := s.site(w, r)
 	if site == nil {
@@ -178,28 +208,34 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	hours := map[int64]*agg{}
 	aggs, err := s.Store.Aggregates(r.Context(), site.ID, since, cur)
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	for _, a := range aggs {
 		hours[a.Hour.Unix()] = aggFromMap(a.Data)
 	}
-	// Hours not yet rolled up (e.g. right after startup) and the current hour.
-	err = s.Store.StreamEvents(r.Context(), store.EventFilter{SiteID: site.ID, Since: since}, func(e *store.Event) error {
+	live := since
+	if mark := s.rollupMark(r.Context()); mark.After(live) {
+		live = mark
+		if live.After(cur) {
+			live = cur
+		}
+	}
+	for h := range hours {
+		if h >= live.Unix() {
+			delete(hours, h) // recomputed from events below
+		}
+	}
+	err = s.Store.StreamEvents(r.Context(), store.EventFilter{SiteID: site.ID, Since: live}, func(e *store.Event) error {
 		h := e.TS.UTC().Truncate(time.Hour).Unix()
-		if _, rolled := hours[h]; rolled && h != cur.Unix() {
-			return nil
+		if hours[h] == nil {
+			hours[h] = newAgg()
 		}
-		a := hours[h]
-		if a == nil || (h == cur.Unix() && a == nil) {
-			a = newAgg()
-			hours[h] = a
-		}
-		a.add(e)
+		hours[h].add(e)
 		return nil
 	})
 	if err != nil {
-		problem(w, http.StatusInternalServerError, "internal", err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	total := newAgg()

@@ -151,8 +151,16 @@ func ApplyChallengeCredit(d Decision, credit int, th Thresholds, mode SiteMode) 
 		d.WouldBe = Block
 	}
 	d.Outcome = d.WouldBe
-	if mode == ModeMonitor {
+	switch mode {
+	case ModeMonitor:
 		d.Outcome = Allow
+	case ModeChallengeOnly:
+		// Never block: the challenge is the only gate. Callers escalate to
+		// the strongest challenge (visual) before applying a credit that
+		// would still leave a block.
+		if d.Outcome == Block {
+			d.Outcome = Allow
+		}
 	}
 	return d
 }

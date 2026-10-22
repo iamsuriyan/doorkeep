@@ -16,3 +16,10 @@
 		file_server
 	}
 }
+
+# Unprotected static origin for the Traefik test (Traefik does not serve
+# files itself; it forwards protected paths here after ForwardAuth).
+:18188 {
+	root * /srv
+	file_server
+}

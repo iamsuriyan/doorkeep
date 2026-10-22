@@ -1,0 +1,13 @@
+{
+	admin off
+	auto_https off
+}
+:8000 {
+	# doorkeep on the site's own origin: no CORS, not a third-party host.
+	handle_path /_dk/* {
+		reverse_proxy doorkeep:8080
+	}
+	handle {
+		reverse_proxy wordpress:80
+	}
+}

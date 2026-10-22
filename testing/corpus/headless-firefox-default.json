@@ -1,0 +1,10 @@
+{
+  "name": "Default headless Firefox (Playwright)",
+  "source": "Signals measured by testing/e2e/tests/detection.spec.ts against Firefox headless",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 1, "beh.total_events": 0, "t.elapsed_s": 0.7},
+    "cat": {"fp.ua_family": "firefox", "fp.os_family": "linux", "auto.eng": "spidermonkey", "fp.gpu_class": "software"}
+  },
+  "expect": {"outcome": "block", "min_risk": 80, "fires": ["AUTOMATION_WEBDRIVER"], "not_fires": ["UA_ENGINE_MISMATCH"]}
+}

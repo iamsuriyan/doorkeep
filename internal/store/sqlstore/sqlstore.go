@@ -281,8 +281,11 @@ func scanNonce(row scanner) (*nonce.Nonce, error) {
 	return &n, nil
 }
 
+// Get reads from the reader pool: callers only use it to look a nonce up,
+// and every state change goes through Transition's compare-and-set, so a
+// read that races a write cannot cause a wrong transition.
 func (db *DB) Get(ctx context.Context, id string) (*nonce.Nonce, error) {
-	return scanNonce(db.w.QueryRowContext(ctx, db.q(`SELECT `+nonceCols+` FROM nonces WHERE id=?`), id))
+	return scanNonce(db.r.QueryRowContext(ctx, db.q(`SELECT `+nonceCols+` FROM nonces WHERE id=?`), id))
 }
 
 func (db *DB) Transition(ctx context.Context, id string, from []nonce.State, to nonce.State, now time.Time, mutate func(*nonce.Nonce)) (*nonce.Nonce, error) {
@@ -443,7 +446,7 @@ func eventWhere(f store.EventFilter) (string, []any) {
 		where, args = append(where, "outcome=?"), append(args, string(f.Outcome))
 	}
 	if f.FPHash != "" {
-		where, args = append(where, "fp_hash LIKE ?"), append(args, strings.ToLower(f.FPHash)+"%")
+		where, args = append(where, `fp_hash LIKE ? ESCAPE '!'`), append(args, likeEscape(strings.ToLower(f.FPHash))+"%")
 	}
 	if f.IP24 != "" {
 		where, args = append(where, "ip24_hash=?"), append(args, f.IP24)
@@ -452,12 +455,18 @@ func eventWhere(f store.EventFilter) (string, []any) {
 		where, args = append(where, "label=?"), append(args, f.Label)
 	}
 	if f.Reason != "" {
-		where, args = append(where, `reasons LIKE ?`), append(args, `%"code":"`+f.Reason+`"%`)
+		where, args = append(where, `reasons LIKE ? ESCAPE '!'`), append(args, `%"code":"`+likeEscape(f.Reason)+`"%`)
 	}
 	if len(where) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+// likeEscape escapes LIKE wildcards in user input for use with ESCAPE '!'
+// (the same syntax on SQLite and Postgres).
+func likeEscape(v string) string {
+	return strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(v)
 }
 
 func (db *DB) ListEvents(ctx context.Context, f store.EventFilter) ([]*store.Event, error) {
@@ -498,6 +507,14 @@ func (db *DB) PurgeEvents(ctx context.Context, before time.Time) (int64, error) 
 }
 
 // ---------------- replay tracking ----------------
+
+func (db *DB) PurgeCanvas(ctx context.Context, before time.Time) (int64, error) {
+	res, err := db.w.ExecContext(ctx, db.q(`DELETE FROM canvas_seen WHERE seen_at < ?`), ms(before))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
 
 func (db *DB) CanvasSeen(ctx context.Context, siteID, canvasHash, seedHash string, now time.Time, window time.Duration) (bool, error) {
 	if canvasHash == "" {
@@ -673,18 +690,92 @@ func (db *DB) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
-func (db *DB) CreateAdminToken(ctx context.Context, tokenHash, name string, now time.Time) error {
-	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO admin_tokens(token_hash,name,created_at) VALUES(?,?,?)`), tokenHash, name, ms(now))
+func (db *DB) CreateAdminToken(ctx context.Context, tokenHash, name string, now, expires time.Time) error {
+	var exp any
+	if !expires.IsZero() {
+		exp = ms(expires)
+	}
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO admin_tokens(token_hash,name,created_at,expires_at) VALUES(?,?,?,?)`), tokenHash, name, ms(now), exp)
 	return err
 }
 
-func (db *DB) AdminTokenName(ctx context.Context, tokenHash string) (string, error) {
+func (db *DB) AdminTokenName(ctx context.Context, tokenHash string, now time.Time) (string, error) {
 	var n string
-	err := db.r.QueryRowContext(ctx, db.q(`SELECT name FROM admin_tokens WHERE token_hash=?`), tokenHash).Scan(&n)
+	var exp, used sql.NullInt64
+	err := db.r.QueryRowContext(ctx, db.q(`SELECT name, expires_at, last_used_at FROM admin_tokens WHERE token_hash=?`), tokenHash).Scan(&n, &exp, &used)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", store.ErrNotFound
 	}
-	return n, err
+	if err != nil {
+		return "", err
+	}
+	if exp.Valid && exp.Int64 <= ms(now) {
+		return "", store.ErrNotFound
+	}
+	// Record use at most once a minute so automation does not turn every
+	// read into a write.
+	if !used.Valid || ms(now)-used.Int64 > 60_000 {
+		_, _ = db.w.ExecContext(ctx, db.q(`UPDATE admin_tokens SET last_used_at=? WHERE token_hash=?`), ms(now), tokenHash)
+	}
+	return n, nil
+}
+
+func (db *DB) ListAdminTokens(ctx context.Context) ([]store.AdminToken, error) {
+	rows, err := db.r.QueryContext(ctx, `SELECT token_hash, name, created_at, expires_at, last_used_at FROM admin_tokens ORDER BY created_at, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.AdminToken
+	for rows.Next() {
+		var h string
+		var t store.AdminToken
+		var created int64
+		var exp, used sql.NullInt64
+		if err := rows.Scan(&h, &t.Name, &created, &exp, &used); err != nil {
+			return nil, err
+		}
+		t.ID, t.CreatedAt = h[:store.AdminTokenIDLen], fromMS(created)
+		if exp.Valid {
+			x := fromMS(exp.Int64)
+			t.ExpiresAt = &x
+		}
+		if used.Valid {
+			x := fromMS(used.Int64)
+			t.LastUsedAt = &x
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) RevokeAdminToken(ctx context.Context, id string) error {
+	if len(id) != store.AdminTokenIDLen || strings.Trim(id, "0123456789abcdef") != "" {
+		return store.ErrNotFound
+	}
+	// id is lowercase hex only, so it cannot contain LIKE wildcards.
+	res, err := db.w.ExecContext(ctx, db.q(`DELETE FROM admin_tokens WHERE token_hash LIKE ?`), id+"%")
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (db *DB) GetKV(ctx context.Context, key string) (string, error) {
+	var v string
+	err := db.r.QueryRowContext(ctx, db.q(`SELECT value FROM kv WHERE key=?`), key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", store.ErrNotFound
+	}
+	return v, err
+}
+
+func (db *DB) PutKV(ctx context.Context, key, value string) error {
+	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`), key, value)
+	return err
 }
 
 func (db *DB) Audit(ctx context.Context, e store.AuditEntry) error {
@@ -757,6 +848,14 @@ func (db *DB) PutAggregate(ctx context.Context, siteID string, a store.Aggregate
 	_, err := db.w.ExecContext(ctx, db.q(`INSERT INTO aggregates_hourly(site_id,hour,data) VALUES(?,?,?)
 		ON CONFLICT(site_id,hour) DO UPDATE SET data=excluded.data`), siteID, a.Hour.Unix(), string(d))
 	return err
+}
+
+func (db *DB) PurgeAggregates(ctx context.Context, before time.Time) (int64, error) {
+	res, err := db.w.ExecContext(ctx, db.q(`DELETE FROM aggregates_hourly WHERE hour < ?`), before.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (db *DB) Aggregates(ctx context.Context, siteID string, since, until time.Time) ([]store.Aggregate, error) {

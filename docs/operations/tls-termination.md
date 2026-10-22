@@ -30,8 +30,35 @@ Add the proxy to `trusted_proxies` and forward:
 | `Doorkeep-TLS` | `ja4=<JA4 string>` |
 | `Doorkeep-H2` | Akamai text form `settings\|window\|priority\|pseudo` |
 
-Headers from untrusted peers are ignored. Without either option, TLS and
-HTTP/2 rules simply do not fire; nothing is treated as suspicious.
+`Doorkeep-TLS` may also carry `h2=1` or `h2=0` (whether the client offered
+HTTP/2 in ALPN), which enables the HTTP/1.1-on-an-h2-browser check.
+
+Headers from untrusted peers are ignored. Without any of these options, TLS
+and HTTP/2 rules simply do not fire; nothing is treated as suspicious.
+
+## Option 3: put dk-ja4 in front of your proxy
+
+Most proxies cannot export a JA4 or an HTTP/2 fingerprint. `dk-ja4` (built
+alongside doorkeep, `cmd/dk-ja4`) is a small TLS terminator that records both
+exactly as doorkeep does and forwards everything to your existing proxy over
+plain HTTP with the two headers set. It removes any `Doorkeep-TLS` or
+`Doorkeep-H2` a client sends, so they cannot be forged through it.
+
+```
+client --TLS--> dk-ja4 :443 --HTTP--> nginx/Caddy :8080 --/_dk/--> doorkeep
+```
+
+```sh
+dk-ja4 -listen :443 -cert /etc/ssl/site.pem -key /etc/ssl/site.key -upstream http://127.0.0.1:8080
+# or automatic certificates:
+dk-ja4 -listen :443 -autocert shop.example.com -upstream http://127.0.0.1:8080
+```
+
+Your proxy passes request headers through to doorkeep unchanged by default.
+Add the address doorkeep sees `/_dk/` requests from (your proxy) to
+`trusted_proxies`, and make sure the proxy is only reachable through
+dk-ja4, or a client could connect to it directly and send its own headers.
+dk-ja4 sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`.
 
 ## What the fingerprints mean (measured 2026-10-22)
 

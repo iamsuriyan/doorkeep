@@ -69,6 +69,17 @@ func (m *LogReg) Prob(f scoring.Features) float64 {
 	return m.prob(indicators(f))
 }
 
+// assess returns the label count, promotion state and P(bot) for f, read
+// together under the lock (Learn and Promote write them concurrently).
+func (m *LogReg) assess(f scoring.Features) (labels int, promoted bool, p float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Labels == 0 {
+		return 0, m.Promoted, 0
+	}
+	return m.Labels, m.Promoted, m.prob(indicators(f))
+}
+
 // Learn updates with one labelled example (bot=true) and sample weight w.
 func (m *LogReg) Learn(f scoring.Features, bot bool, w float64) {
 	m.mu.Lock()

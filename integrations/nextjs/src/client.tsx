@@ -11,21 +11,47 @@ declare global {
 
 const SRC = "/_dk/v1/dk.js";
 
+const LOAD_TIMEOUT_MS = 15_000;
+let loading: Promise<NonNullable<Window["doorkeep"]>> | null = null;
+
+/** Load the snippet once. Rejects on a network error or after a timeout. */
 function load(sitekey: string): Promise<NonNullable<Window["doorkeep"]>> {
   if (window.doorkeep) return Promise.resolve(window.doorkeep);
-  let s = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
-  if (!s) {
-    s = document.createElement("script");
-    s.src = SRC;
-    s.async = true;
-    s.dataset.sitekey = sitekey;
-    document.head.appendChild(s);
-  }
-  return new Promise((resolve, reject) => {
-    const check = () => (window.doorkeep ? resolve(window.doorkeep) : setTimeout(check, 30));
-    s!.addEventListener("error", () => reject(new Error("doorkeep snippet failed to load")));
-    check();
+  if (loading) return loading;
+  loading = new Promise<NonNullable<Window["doorkeep"]>>((resolve, reject) => {
+    let s = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
+    const fresh = !s;
+    if (!s) {
+      s = document.createElement("script");
+      s.src = SRC;
+      s.async = true;
+      s.dataset.sitekey = sitekey;
+    }
+    let timer = 0;
+    let failed = false;
+    const fail = (msg: string) => {
+      failed = true;
+      clearTimeout(timer);
+      loading = null; // allow a retry, e.g. after the network comes back
+      if (fresh) s!.remove();
+      reject(new Error(msg));
+    };
+    const ready = () => {
+      if (failed) return;
+      if (window.doorkeep) {
+        clearTimeout(timer);
+        resolve(window.doorkeep);
+      } else setTimeout(ready, 30);
+    };
+    // Listeners go on before the element is inserted, so an immediate
+    // failure is never missed; an element some other code inserted earlier
+    // may have failed already, which the timeout covers.
+    s.addEventListener("error", () => fail("doorkeep snippet failed to load"), { once: true });
+    timer = window.setTimeout(() => fail("doorkeep snippet did not load in time"), LOAD_TIMEOUT_MS);
+    if (fresh) document.head.appendChild(s);
+    ready();
   });
+  return loading;
 }
 
 /** Place inside a <form>. Adds a hidden dk-response field on submit. */

@@ -1,0 +1,11 @@
+{
+  "name": "playwright-extra + stealth plugin, headless, default input",
+  "source": "testing/e2e/tests/stealth.spec.ts; known_misses.yaml lists the signals that remain",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "auto.conn_rtt_zero": 1, "fp.font_os_mismatch": 1, "beh.total_events": 6, "beh.click_count": 1,
+            "beh.click_center_frac": 1, "beh.click_dur_mean": 0, "beh.input_no_key_frac": 1, "beh.key_count": 0, "beh.ptr_samples": 0, "t.elapsed_s": 2.1},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "software"}
+  },
+  "expect": {"outcome": "block", "min_risk": 75, "fires": ["CLICK_EXACT_CENTER", "PROGRAMMATIC_FILL_AND_CLICK", "FONT_OS_MISMATCH"], "not_fires": ["AUTOMATION_WEBDRIVER"]}
+}

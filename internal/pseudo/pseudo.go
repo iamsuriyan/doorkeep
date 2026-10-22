@@ -23,6 +23,7 @@ import (
 // Keyer derives scoped keys from the instance secret.
 type Keyer struct {
 	secret []byte
+	velKey []byte
 }
 
 // New returns a Keyer. secret must be at least 32 bytes.
@@ -30,7 +31,9 @@ func New(secret []byte) *Keyer {
 	if len(secret) < 32 {
 		panic("pseudo: instance secret must be >= 32 bytes")
 	}
-	return &Keyer{secret: append([]byte(nil), secret...)}
+	k := &Keyer{secret: append([]byte(nil), secret...)}
+	k.velKey = k.derive("vel")
+	return k
 }
 
 func (k *Keyer) derive(info string) []byte {
@@ -91,6 +94,25 @@ func (k *Keyer) IPHash(addr netip.Addr, at time.Time) string {
 	key := k.derive("ip|" + at.UTC().Format("2006-01-02"))
 	sum := mac(key, Prefix(addr))
 	return hex.EncodeToString(sum[:16])
+}
+
+// IPHashMatches reports whether addr hashes to h on the day of issued or of
+// now. A session or token that crosses UTC midnight was hashed under the
+// previous day's key, so checking only one day would report a false change.
+func (k *Keyer) IPHashMatches(addr netip.Addr, h string, issued, now time.Time) bool {
+	if k.IPHash(addr, issued) == h {
+		return true
+	}
+	return issued.UTC().Format("2006-01-02") != now.UTC().Format("2006-01-02") && k.IPHash(addr, now) == h
+}
+
+// VelKey pseudonymises a value used as a velocity counter key (an IP or a
+// prefix), so raw addresses never reach memory dumps or a shared Redis.
+// Counters live for at most an hour; the key is stable across nodes that
+// share the instance secret.
+func (k *Keyer) VelKey(v string) string {
+	sum := mac(k.velKey, v)
+	return hex.EncodeToString(sum[:12])
 }
 
 // UAHash is a short non-keyed hash used only to compare the UA between

@@ -1,7 +1,8 @@
-// Edge mode through real nginx (auth_request) and Caddy (forward_auth).
+// Edge mode through real nginx (auth_request), Caddy (forward_auth) and
+// Traefik (ForwardAuth, using integrations/traefik/dynamic.yml as shipped).
 import { chromium, expect, test } from "@playwright/test";
 
-for (const [name, port] of [["nginx", 18183], ["caddy", 18184]] as const) {
+for (const [name, port] of [["nginx", 18183], ["caddy", 18184], ["traefik", 18187]] as const) {
   test.describe(`edge via ${name}`, () => {
     test.skip(() => !process.env.DK_EDGE, "Docker proxies not available");
 
@@ -11,9 +12,11 @@ for (const [name, port] of [["nginx", 18183], ["caddy", 18184]] as const) {
       await page.goto(`http://localhost:${port}/search?q=doors`);
       await expect(page.locator("#protected")).toHaveText("Protected content", { timeout: 30_000 });
       expect(new URL(page.url()).pathname).toBe("/search");
-      // The cookie now lets the browser straight through.
-      const res = await page.goto(`http://localhost:${port}/`);
+      // The cookie now lets the browser straight through. (Traefik's example
+      // config only routes the protected paths, so revisit one of those.)
+      const res = await page.goto(`http://localhost:${port}/${name === "traefik" ? "search?again=1" : ""}`);
       expect(res?.status()).toBe(200);
+      expect(new URL(page.url()).pathname).not.toContain("_dk");
       const cookies = await page.context().cookies();
       const edge = cookies.find((c) => c.name === "__dk_edge");
       console.log(`${name}: passed, cookie httpOnly=${edge?.httpOnly}`);

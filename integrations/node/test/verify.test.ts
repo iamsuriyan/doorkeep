@@ -33,4 +33,17 @@ describe("verify", () => {
     const open = await createVerifier({ endpoint: "https://dk.test", secret: "s", fetch: down, failMode: "open" }).verify("t");
     expect(open).toMatchObject({ success: true, failedOpen: true });
   });
+
+  it("treats a non-JSON reply (proxy error page) as unavailable, honouring failMode", async () => {
+    const html = (async () => new Response("<html>502 Bad Gateway</html>", { status: 404, headers: { "Content-Type": "text/html" } })) as unknown as typeof fetch;
+    await expect(createVerifier({ endpoint: "https://dk.test", secret: "s", fetch: html }).verify("t")).rejects.toBeInstanceOf(DoorkeepUnavailableError);
+    const open = await createVerifier({ endpoint: "https://dk.test", secret: "s", fetch: html, failMode: "open" }).verify("t");
+    expect(open.failedOpen).toBe(true);
+    await expect(createVerifier({ endpoint: "https://dk.test", secret: "s", fetch: html }).report("evt_1", "bot")).rejects.toBeInstanceOf(DoorkeepUnavailableError);
+  });
+
+  it("passes doorkeep's own failures through (they are answers, not outages)", async () => {
+    const dk = createVerifier({ endpoint: "https://dk.test", secret: "s", fetch: fakeFetch(() => [200, { success: false, "error-codes": ["timeout-or-duplicate"] }]) });
+    expect(await dk.verify("t")).toMatchObject({ success: false, "error-codes": ["timeout-or-duplicate"] });
+  });
 });

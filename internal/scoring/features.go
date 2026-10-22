@@ -3,13 +3,15 @@
 //
 // features.go is the single source of truth for feature keys. Every key is
 // registered once with its kind, group and description; `go generate` renders
-// docs/reference/features.md and a TypeScript const file for the dashboard
-// from this registry so the three never drift.
+// docs/reference/features.md and reason-codes.md from this registry and the
+// built-in rules (tools/docgen), and CI fails if they drift.
 //
 // Design rule (docs/design/v1.md section 1.1): a missing feature is "unknown",
 // never "suspicious". Numeric features use NaN for missing; categorical
 // features use the empty string. Both layers treat missing as neutral.
 package scoring
+
+//go:generate go run ../../tools/docgen -out ../../docs/reference
 
 import (
 	"math"
@@ -423,6 +425,6 @@ func init() {
 		reg(Def{Group: GroupVelocity, Name: "site_submits_" + w, Kind: KindCount, Max: 1e9, Desc: "Submits for this site in the last " + w, Model: true})
 	}
 	reg(Def{Group: GroupVelocity, Name: "ip_challenge_fail_1h", Kind: KindCount, Max: 1e6, Desc: "Failed challenges from this IP in the last hour", Model: true})
-	reg(Def{Group: GroupVelocity, Name: "site_rate_ratio", Kind: KindFloat, Max: 1000, Desc: "Site submits in the last 10 min relative to the 7-day baseline for this hour", Model: true})
+	reg(Def{Group: GroupVelocity, Name: "site_rate_ratio", Kind: KindFloat, Max: 1000, Desc: "Site submits in the last 10 min relative to the same hour on the previous 7 days (hourly rollups); unset with under 3 days of history", Model: true})
 	reg(Def{Group: GroupVelocity, Name: "fp_interval_cv", Kind: KindFloat, Max: 10, Desc: "CV of inter-submit intervals for this fingerprint (>=10 events)", Model: true})
 }

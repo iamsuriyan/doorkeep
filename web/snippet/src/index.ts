@@ -24,10 +24,14 @@ interface Options {
   "error-callback"?: (err: unknown) => void;
 }
 
+type Deferred = [{ au?: string; fn?: string }, number[] | undefined];
+
 interface Session extends SessionResp {
   action: string;
   receivedAt: number; // performance.now() when the response arrived
   used: boolean;
+  deferred: Promise<Deferred>; // audio, fonts and frame cadence, started early
+  startDeferredNow: () => void;
 }
 
 const script = document.currentScript as HTMLScriptElement | null;
@@ -60,9 +64,27 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 function newSession(sitekey: string, action: string): Promise<Session> {
-  return post<SessionResp>("/v1/session", { sk: sitekey, a: action }).then((s) => ({
-    ...s, action, receivedAt: performance.now(), used: false,
-  }));
+  return post<SessionResp>("/v1/session", { sk: sitekey, a: action }).then((s) => {
+    const d = startDeferred(s.mod || [], s.deferMs);
+    return { ...s, action, receivedAt: performance.now(), used: false, deferred: d.result, startDeferredNow: d.now };
+  });
+}
+
+/**
+ * Run the deferred-stage probes (audio, fonts, frame cadence) when the page
+ * is idle, deferMs after the session arrives, so a submit does not wait for
+ * them. A submit that comes sooner starts them immediately.
+ */
+function startDeferred(mods: string[], deferMs: number): { result: Promise<Deferred>; now: () => void } {
+  let now: () => void = () => {};
+  const started = new Promise<void>((resolve) => { now = resolve; });
+  const idle = (window as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => number) | undefined;
+  setTimeout(() => (idle ? idle(now, { timeout: 1000 }) : now()), Math.max(0, Math.min(deferMs || 0, 5000)));
+  const result = started.then(() => Promise.all([
+    collectFPDeferred(mods),
+    mods.includes("raf") ? rafCadence() : Promise.resolve(undefined),
+  ]) as Promise<Deferred>);
+  return { result, now };
 }
 
 /** Reuse the prefetched session when it matches and has at least 10 s left. */
@@ -76,13 +98,12 @@ async function getSession(sitekey: string, action: string): Promise<Session> {
 }
 
 async function buildPayload(s: Session): Promise<Payload> {
-  const mods = s.mod || [];
-  const [auto, fp, env, deferred, raf] = await Promise.all([
+  s.startDeferredNow(); // submitting: do not wait for idle time
+  const [auto, fp, env, [deferred, raf]] = await Promise.all([
     collectAuto(),
     collectFP(s.seed),
     collectEnv(__DK_VERSION__),
-    collectFPDeferred(mods),
-    mods.includes("raf") ? rafCadence() : Promise.resolve(undefined),
+    s.deferred,
   ]);
   const prof = await collectProfile(fp.tz, fp.hc);
   const b = beh.snapshot();

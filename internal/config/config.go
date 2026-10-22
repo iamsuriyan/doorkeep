@@ -20,8 +20,9 @@ import (
 // Config is the runtime configuration.
 type Config struct {
 	Listen string `yaml:"listen"`
-	// AdminListen, if set, serves the dashboard and admin API only on this
-	// address (e.g. 127.0.0.1:8081) and removes them from Listen.
+	// AdminListen serves the dashboard and admin API only on this address
+	// (default 127.0.0.1:8081), never on Listen. The value "public" puts
+	// them on Listen instead, which exposes the login form to the internet.
 	AdminListen    string        `yaml:"admin_listen"`
 	DataDir        string        `yaml:"data_dir"`
 	PublicURL      string        `yaml:"public_url"`
@@ -64,6 +65,7 @@ type TokenKey struct {
 func Defaults() Config {
 	return Config{
 		Listen:           ":8080",
+		AdminListen:      "127.0.0.1:8081",
 		DataDir:          "./data",
 		TokenTTL:         5 * time.Minute,
 		EventRetention:   30 * 24 * time.Hour,
@@ -174,6 +176,9 @@ func (c *Config) validate() error {
 	}
 	if c.TLSCert != "" && len(c.AutocertDomains) > 0 {
 		return errors.New("config: use either tls_cert/tls_key or autocert_domains, not both")
+	}
+	if c.AdminListen == "public" {
+		c.AdminListen = ""
 	}
 	if c.AdminListen != "" && c.AdminListen == c.Listen {
 		return errors.New("config: admin_listen must differ from listen")

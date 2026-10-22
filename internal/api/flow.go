@@ -23,6 +23,10 @@ import (
 	"github.com/iamsuriyan/doorkeep/internal/token"
 )
 
+// CanvasReplayWindow is how long a seeded canvas hash is remembered for
+// replay detection; older records are purged.
+const CanvasReplayWindow = 24 * time.Hour
+
 // Challenge credits (design section 4.5).
 // Session rate limits (design section 3.5), applied before any work.
 const (
@@ -31,7 +35,6 @@ const (
 	creditPoW          = 20
 	creditVisual       = 45
 	maxAttempts        = 3
-	canvasWindow       = 24 * time.Hour
 	sessionBodyMax     = 1024
 )
 
@@ -75,10 +78,9 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.Now()
 	ip := s.clientIP(r)
-	s.Vel.Add("sess-ip:" + ip.String())
-	s.Vel.Add("sess-24:" + pseudo.Prefix(ip))
-	if s.Vel.Count("sess-ip:"+ip.String(), time.Minute) > sessionPerIPPerMin ||
-		s.Vel.Count("sess-24:"+pseudo.Prefix(ip), time.Minute) > sessionPer24PerMin {
+	kIP, k24 := "sess-ip:"+s.Keys.VelKey(ip.String()), "sess-24:"+s.Keys.VelKey(pseudo.Prefix(ip))
+	c := s.Vel.Batch([]velocity.Op{{Key: kIP}, {Key: k24}}, []velocity.Query{{Key: kIP, Dur: time.Minute}, {Key: k24, Dur: time.Minute}})
+	if c[0] > sessionPerIPPerMin || c[1] > sessionPer24PerMin {
 		w.Header().Set("Retry-After", "30")
 		clientError(w, http.StatusTooManyRequests, "rate-limited")
 		return
@@ -154,15 +156,15 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		ElapsedMS: float64(now.Sub(n.IssuedAt).Milliseconds()),
 		NowMS:     float64(now.UnixMilli()),
 	})
-	signet.Analyze(feats, r, p.FP.UA, cls.Langs, cls)
+	signet.Analyze(feats, r, s.fromTrustedProxy(r), p.FP.UA, cls.Langs, cls)
 	ja4, offersH2, h2, h2Text := s.connPrints(r)
 	hdrFamily, _ := payload.UAFamily(r.UserAgent())
 	applyConnFeatures(feats, ja4, offersH2, h2, h2Text, hdrFamily, payload.OSFamily(r.UserAgent()))
 	feats.SetBool("net.origin_mismatch", origin != n.Origin)
 	feats.SetBool("net.ua_changed", pseudo.UAHash(r.UserAgent()) != n.UAHash)
-	feats.SetBool("net.ip24_changed", s.Keys.IPHash(ip, now) != n.IPHash)
+	feats.SetBool("net.ip24_changed", !s.Keys.IPHashMatches(ip, n.IPHash, n.IssuedAt, now))
 	if !p.FP.CV.B && cls.CanvasHash != "" {
-		conflict, err := s.Store.CanvasSeen(ctx, site.ID, cls.CanvasHash, s.Keys.SeedHash(n.Seed), now, canvasWindow)
+		conflict, err := s.Store.CanvasSeen(ctx, site.ID, cls.CanvasHash, s.Keys.SeedHash(n.Seed), now, CanvasReplayWindow)
 		if err == nil {
 			feats.SetBool("net.canvas_seed_conflict", conflict)
 		}
@@ -176,6 +178,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	info := s.IP.Get().Lookup(ip)
 	applyIPInfo(feats, info, cls.TZCountry)
 	s.applyVelocity(feats, site.ID, ip, fpHash, cls, info)
+	surge := s.applySiteRate(ctx, feats, site, now)
 
 	res := s.siteRules(ctx, site.ID).Eval(rules.Context(feats.Env(), n.Action, interactive(site)))
 	listAction, listCode := s.matchLists(ctx, site.ID, ip, info, fpHash, r.UserAgent(), now)
@@ -204,7 +207,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if d.Outcome == scoring.Challenge {
-		params := pow.ForRisk(d.Risk, isMobileUA(r.UserAgent()), false)
+		params := pow.ForRisk(d.Risk, isMobileUA(r.UserAgent()), surge)
 		n, err = s.Store.Transition(ctx, n.ID, []nonce.State{nonce.Submitted}, nonce.ChallengedPoW, now, func(x *nonce.Nonce) {
 			x.PoWSalt, x.PoWBits, x.PoWN, x.Risk, x.Floor = params.Salt, params.Bits, params.N, d.Risk, d.Floor
 			x.ExpiresAt = now.Add(nonce.ChallengeTTL)
@@ -281,7 +284,7 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	params := pow.Params{Salt: n.PoWSalt, Bits: n.PoWBits, N: n.PoWN}
 	if !pow.Verify(n.ID, params, req.Sol) {
-		s.Vel.Add("chfail:" + s.clientIP(r).String())
+		s.Vel.Add(s.challengeFailKey(s.clientIP(r)))
 		_, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedPoW}, nonce.ChallengedPoW, now, func(x *nonce.Nonce) {
 			x.Attempts++
 			if x.Attempts >= maxAttempts {
@@ -301,10 +304,16 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	th := site.ThresholdsFor(n.Action)
+	d := scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
+	d = scoring.ApplyChallengeCredit(d, creditPoW, th, scoring.ModeEnforce)
 	// Proof of work clears only the lower part of the challenge band. If the
 	// risk is still at or above the challenge threshold after its credit,
-	// escalate to the visual/audio challenge within the same nonce.
-	if n.Risk-creditPoW >= th.Challenge && n.Risk < th.Block && site.Mode != scoring.ModeMonitor {
+	// escalate to the visual/audio challenge within the same nonce. In
+	// challenge_only mode (never block) anything proof of work alone would
+	// not allow, including block-band risk, goes to the visual challenge.
+	escalate := site.Mode != scoring.ModeMonitor && ((n.Risk-creditPoW >= th.Challenge && n.Risk < th.Block) ||
+		(site.Mode == scoring.ModeChallengeOnly && d.WouldBe != scoring.Allow))
+	if escalate {
 		n2, err := s.Store.Transition(ctx, n.ID, []nonce.State{nonce.ChallengedPoW}, nonce.ChallengedVisual, now, func(x *nonce.Nonce) {
 			x.Attempts = 0
 			x.Risk = n.Risk - creditPoW
@@ -318,7 +327,7 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.visualResp(ctx, n2))
 		return
 	}
-	d := scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
+	d = scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
 	d = scoring.ApplyChallengeCredit(d, creditPoW, th, site.Mode)
 	if err := s.Store.UpdateEventChallenge(ctx, ev.ID, "pow", true, d.Risk, d.Outcome, d.Reasons); err != nil {
 		s.Log.Error("event update", "err", err)
@@ -353,37 +362,53 @@ func applyIPInfo(f scoring.Features, info ipintel.Info, tzCountry string) {
 	}
 }
 
-// applyVelocity records this submit and reads back windowed counts. Keys
-// live in memory only (raw IP for at most an hour, design section 6.1).
+// applyVelocity records this submit and reads back windowed counts in one
+// batch. Keys are keyed hashes of addresses and prefixes, never raw IPs, and
+// live in memory (or Redis) for at most an hour (design section 6.1).
 func (s *Server) applyVelocity(f scoring.Features, siteID string, ip netip.Addr, fpHash string, cls payload.Classified, info ipintel.Info) {
-	v := s.Vel
-	ipKey := "ip:" + ip.String()
-	p24 := pseudo.Prefix(ip)
+	p24 := "24:" + s.Keys.VelKey(pseudo.Prefix(ip))
+	ipKey := "ip:" + s.Keys.VelKey(ip.String())
 	k24 := "24:" + siteID + ":" + p24
 	kfp := "fp:" + fpHash
 	ksite := "site:" + siteID
 	asn := "asn:" + strconv.FormatUint(uint64(info.ASN), 10)
-	v.Add(ipKey)
-	v.Add(k24, "fp:"+fpHash)
-	v.Add(kfp, asn, "24:"+p24)
-	v.Add(ksite)
+	ops := []velocity.Op{{Key: ipKey}, {Key: k24, Members: []string{"fp:" + fpHash}}, {Key: kfp, Members: []string{asn, p24}}, {Key: ksite}}
 	kcv := ""
 	if cls.CanvasStatic != "" {
 		kcv = "cv:" + siteID + ":" + cls.CanvasStatic
-		v.Add(kcv, "ua:"+cls.UAFamily)
+		ops = append(ops, velocity.Op{Key: kcv, Members: []string{"ua:" + cls.UAFamily}})
 	}
+	type read struct {
+		feature string
+		q       velocity.Query
+	}
+	var reads []read
 	for _, w := range velocity.Windows {
-		f.Set("vel.ip_submits_"+w.Name, float64(v.Count(ipKey, w.Dur)))
-		f.Set("vel.ip24_submits_"+w.Name, float64(v.Count(k24, w.Dur)))
-		f.Set("vel.ip24_distinct_fp_"+w.Name, float64(v.Distinct(k24, w.Dur, "fp:")))
-		f.Set("vel.fp_submits_"+w.Name, float64(v.Count(kfp, w.Dur)))
-		f.Set("vel.fp_distinct_ip24_"+w.Name, float64(v.Distinct(kfp, w.Dur, "24:")))
-		f.Set("vel.fp_distinct_asn_"+w.Name, float64(v.Distinct(kfp, w.Dur, "asn:")))
-		f.Set("vel.site_submits_"+w.Name, float64(v.Count(ksite, w.Dur)))
+		reads = append(reads,
+			read{"vel.ip_submits_" + w.Name, velocity.Query{Key: ipKey, Dur: w.Dur}},
+			read{"vel.ip24_submits_" + w.Name, velocity.Query{Key: k24, Dur: w.Dur}},
+			read{"vel.ip24_distinct_fp_" + w.Name, velocity.Query{Key: k24, Dur: w.Dur, Prefix: "fp:"}},
+			read{"vel.fp_submits_" + w.Name, velocity.Query{Key: kfp, Dur: w.Dur}},
+			read{"vel.fp_distinct_ip24_" + w.Name, velocity.Query{Key: kfp, Dur: w.Dur, Prefix: "24:"}},
+			read{"vel.fp_distinct_asn_" + w.Name, velocity.Query{Key: kfp, Dur: w.Dur, Prefix: "asn:"}},
+			read{"vel.site_submits_" + w.Name, velocity.Query{Key: ksite, Dur: w.Dur}},
+		)
 		if kcv != "" {
-			f.Set("vel.canvas_distinct_ua_"+w.Name, float64(v.Distinct(kcv, w.Dur, "ua:")))
+			reads = append(reads, read{"vel.canvas_distinct_ua_" + w.Name, velocity.Query{Key: kcv, Dur: w.Dur, Prefix: "ua:"}})
 		}
 	}
-	f.Set("vel.ip_challenge_fail_1h", float64(v.Count("chfail:"+ip.String(), time.Hour)))
-	f.Set("vel.fp_interval_cv", v.IntervalCV(kfp))
+	reads = append(reads, read{"vel.ip_challenge_fail_1h", velocity.Query{Key: s.challengeFailKey(ip), Dur: time.Hour}})
+	qs := make([]velocity.Query, len(reads))
+	for i, r := range reads {
+		qs[i] = r.q
+	}
+	for i, n := range s.Vel.Batch(ops, qs) {
+		f.Set(reads[i].feature, float64(n))
+	}
+	f.Set("vel.fp_interval_cv", s.Vel.IntervalCV(kfp))
+}
+
+// challengeFailKey counts failed challenges per client address.
+func (s *Server) challengeFailKey(ip netip.Addr) string {
+	return "chfail:" + s.Keys.VelKey(ip.String())
 }

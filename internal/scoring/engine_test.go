@@ -73,3 +73,41 @@ func TestChallengeCannotClearProof(t *testing.T) {
 		t.Fatalf("floor in challenge band should not be cleared: %+v", d)
 	}
 }
+
+func TestChallengeCreditByMode(t *testing.T) {
+	th := DefaultThresholds
+	cases := []struct {
+		risk, floor, credit int
+		mode                SiteMode
+		want                Outcome
+	}{
+		{50, 0, 20, ModeEnforce, Allow},        // solved challenge clears the band
+		{60, 60, 45, ModeEnforce, Block},       // proof floor holds risk in the band
+		{90, 80, 45, ModeEnforce, Block},       // floor in the block band
+		{90, 80, 45, ModeMonitor, Allow},       // monitor never enforces
+		{90, 80, 45, ModeChallengeOnly, Allow}, // never block: the challenge is the gate
+		{100, 0, 45, ModeChallengeOnly, Allow}, // block-band risk without a floor
+		{40, 0, 20, ModeChallengeOnly, Allow},  //
+		{60, 60, 45, ModeChallengeOnly, Allow}, // floor-held challenge band
+	}
+	for _, c := range cases {
+		d := ApplyChallengeCredit(Decision{Risk: c.risk, Floor: c.floor, Outcome: Challenge}, c.credit, th, c.mode)
+		if d.Outcome != c.want {
+			t.Errorf("risk %d floor %d credit %d mode %s: outcome %s, want %s", c.risk, c.floor, c.credit, c.mode, d.Outcome, c.want)
+		}
+		if d.Risk < c.floor {
+			t.Errorf("risk %d fell below floor %d", d.Risk, c.floor)
+		}
+	}
+}
+
+func TestChallengeOnlyNeverBlocks(t *testing.T) {
+	for risk := 0; risk <= 100; risk += 5 {
+		for _, list := range []ListAction{"", ListDeny, ListAlwaysChallenge} {
+			d := Combine(risk, nil, nil, risk, 0, 0, list, "L", DefaultThresholds, ModeChallengeOnly)
+			if d.Outcome == Block {
+				t.Fatalf("challenge_only blocked at risk %d list %q", risk, list)
+			}
+		}
+	}
+}

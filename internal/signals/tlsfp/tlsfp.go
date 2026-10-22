@@ -150,8 +150,7 @@ func (h *Hello) JA4() string {
 	}
 	alpn := "00"
 	if len(h.ALPN) > 0 && h.ALPN[0] != "" {
-		a := h.ALPN[0]
-		alpn = string(a[0]) + string(a[len(a)-1])
+		alpn = alpnCode(h.ALPN[0])
 	}
 	a := fmt.Sprintf("t%s%s%02d%02d%s", vs, sni, min(len(ciphers), 99), min(nExt, 99), alpn)
 
@@ -176,6 +175,18 @@ func (h *Hello) JA4() string {
 		c = "000000000000"
 	}
 	return a + "_" + b + "_" + c
+}
+
+// alpnCode is JA4's two-character ALPN field: the first and last
+// characters of the first ALPN value, or, if either is not alphanumeric,
+// the first and last characters of the value's hex encoding (FoxIO spec).
+func alpnCode(a string) string {
+	alnum := func(c byte) bool { return c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' }
+	if alnum(a[0]) && alnum(a[len(a)-1]) {
+		return string(a[0]) + string(a[len(a)-1])
+	}
+	x := hex.EncodeToString([]byte(a))
+	return string(x[0]) + string(x[len(x)-1])
 }
 
 // OffersH2 reports whether the client offered HTTP/2 in ALPN.

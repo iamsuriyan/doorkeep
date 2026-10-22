@@ -1,0 +1,12 @@
+{
+  "name": "Replay of a real human payload under a new nonce",
+  "source": "internal/api replay test; the seeded canvas hash no longer matches the session seed",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "net.canvas_seed_conflict": 1, "beh.total_events": 160, "beh.ptr_samples": 180, "beh.ptr_straightness": 0.42,
+            "beh.ptr_interval_cv": 0.55, "beh.untrusted_frac": 0, "beh.key_count": 24, "beh.key_hold_cv": 0.28, "beh.key_interval_cv": 0.6, "t.elapsed_s": 9.5},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "block", "min_risk": 90, "fires": ["REPLAY_CANVAS_SEED"],
+             "note": "Replayed human behaviour (negative weights) must not lower a proof floor."}
+}

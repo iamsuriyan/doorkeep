@@ -1,0 +1,78 @@
+# WordPress protected by doorkeep, all on one origin:
+#   http://localhost:8000/        WordPress
+#   http://localhost:8000/_dk/    doorkeep (snippet and API), via Caddy
+# Run ./setup.sh once; it starts everything and wires the plugin.
+name: doorkeep-wordpress
+
+x-net: &net
+  networks: [site]
+
+services:
+  doorkeep:
+    <<: *net
+    build: { context: ../.., dockerfile: deploy/Dockerfile }
+    image: ghcr.io/iamsuriyan/doorkeep:dev
+    restart: unless-stopped
+    environment:
+      DOORKEEP_TRUSTED_PROXIES: 172.28.0.0/16   # Caddy and WordPress
+      DOORKEEP_IPDATA_AUTO_UPDATE: "false"      # enable for network signals
+    ports:
+      - "127.0.0.1:8081:8081"                   # dashboard, localhost only
+    volumes: [doorkeep:/data]
+
+  db:
+    <<: *net
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: example-root
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: example-wp
+    volumes: [db:/var/lib/mysql]
+
+  wordpress:
+    <<: *net
+    image: wordpress:6-php8.3-apache
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: example-wp
+      WORDPRESS_DB_NAME: wp
+    volumes:
+      - wp:/var/www/html
+      - ../../integrations/wordpress/doorkeep:/var/www/html/wp-content/plugins/doorkeep:ro
+
+  cli:
+    <<: *net
+    image: wordpress:cli-php8.3
+    profiles: [tools]
+    user: "33:33"
+    depends_on: [db]
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: example-wp
+      WORDPRESS_DB_NAME: wp
+    volumes:
+      - wp:/var/www/html
+      - ../../integrations/wordpress/doorkeep:/var/www/html/wp-content/plugins/doorkeep:ro
+
+  caddy:
+    <<: *net
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["8000:8000"]
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]
+
+networks:
+  site:
+    ipam:
+      config: [{ subnet: 172.28.0.0/16 }]
+
+volumes:
+  doorkeep:
+  db:
+  wp:

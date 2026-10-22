@@ -438,7 +438,7 @@ func uadMismatch(u *UAD, c Classified) bool {
 
 // featMismatch compares the feature-probe bitmask with what the claimed
 // browser version must support. Probe bit order is defined in
-// web/snippet/src/collect/fp.ts (FEATURE_PROBES) and mirrored in probes.
+// web/snippet/src/schema.ts (FEATURE_PROBES) and mirrored in probes.
 func featMismatch(family string, major int, b64 string) int {
 	if b64 == "" || major == 0 {
 		return 0
@@ -487,7 +487,7 @@ var probes = []struct {
 	{"Iterator.prototype.map", map[string]int{"chrome": 122, "edge": 122, "firefox": 131, "safari": 18}},
 }
 
-// Font mask bits mirror FONT_PROBES in web/snippet/src/collect/fonts.ts.
+// Font mask bits mirror FONT_PROBES in web/snippet/src/schema.ts.
 const (
 	fontWindowsMask = 0x3F       // bits 0-5: Segoe UI, Calibri, Cambria, Consolas, Tahoma, Segoe UI Emoji
 	fontMacMask     = 0x3F << 6  // bits 6-11: Helvetica Neue, Menlo, SF Pro, Apple Color Emoji, Avenir, Geneva

@@ -44,6 +44,7 @@ type Server struct {
 	Visual   *visual.Generator
 	Models   *model.Registry
 	rc       ruleCache
+	rates    siteRates
 	Log      *slog.Logger
 	Now      func() time.Time
 	mux      *http.ServeMux
@@ -56,7 +57,7 @@ func New(cfg *config.Config, st store.Store, rs *rules.Set, log *slog.Logger) *S
 	for _, k := range cfg.TokenKeys[1:] {
 		ring.Older = append(ring.Older, token.Key{ID: k.ID, Secret: config.KeyBytes(k)})
 	}
-	s := &Server{Cfg: cfg, Store: st, Rules: rs, Ring: ring, Keys: pseudo.New(cfg.SecretBytes()), IP: &ipintel.Store{}, Log: log, Now: time.Now}
+	s := &Server{Cfg: cfg, Store: newCachedStore(st), Rules: rs, Ring: ring, Keys: pseudo.New(cfg.SecretBytes()), IP: &ipintel.Store{}, Log: log, Now: time.Now}
 	ring.Now = func() time.Time { return s.Now() }
 	s.Vel = velocity.New(func() time.Time { return s.Now() })
 	s.Visual = visual.New(cfg.SecretBytes())

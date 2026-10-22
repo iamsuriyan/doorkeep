@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign up</title>
+<!-- The snippet loads from this site's own origin; server.go proxies /_dk/
+     to doorkeep. Replace the site key with yours. -->
+<script src="/_dk/v1/dk.js" data-sitekey="{{SITE_KEY}}" async defer></script>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 26rem; margin: 3rem auto; padding: 0 1rem; }
+  label { display: block; margin: 0 0 1rem; }
+  input { display: block; width: 100%; padding: .5rem; margin-top: .25rem; font: inherit; }
+  button { padding: .5rem 1rem; font: inherit; }
+</style>
+</head>
+<body>
+<h1>Create an account</h1>
+<form method="POST" action="/signup">
+  <label>Email <input type="email" name="email" autocomplete="email" required></label>
+  <label>Password <input type="password" name="password" autocomplete="new-password" minlength="12" required></label>
+  <!-- On submit the snippet adds a hidden dk-response field here. -->
+  <div class="doorkeep" data-action="signup"></div>
+  <button>Sign up</button>
+</form>
+</body>
+</html>

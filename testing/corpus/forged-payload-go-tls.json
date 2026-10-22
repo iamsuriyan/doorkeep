@@ -1,0 +1,11 @@
+{
+  "name": "Script forging a perfect browser payload over Go's TLS stack from a datacenter",
+  "source": "internal/api m2_test forged-over-Go-TLS case; README detection table (challenged)",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "net.tls_ua_mismatch": 1, "beh.total_events": 160, "beh.ptr_samples": 180, "beh.ptr_straightness": 0.42,
+            "beh.ptr_interval_cv": 0.55, "beh.untrusted_frac": 0, "beh.key_count": 24, "beh.key_hold_cv": 0.28, "beh.key_interval_cv": 0.6, "t.elapsed_s": 9.5},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "hardware", "net.asn_class": "hosting"}
+  },
+  "expect": {"outcome": "challenge", "min_risk": 55, "fires": ["UA_TLS_MISMATCH", "IP_DATACENTER"], "not_fires": ["HUMAN_POINTER_EVIDENCE", "HUMAN_TYPING_EVIDENCE"]}
+}

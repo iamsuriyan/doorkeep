@@ -73,3 +73,40 @@ test("comments: a person can comment, headless Chromium cannot", async () => {
   console.log("wordpress-comment: human posted, headless refused");
   await h.close();
 });
+
+// WooCommerce block checkout places orders through the Store API, not a form
+// submit; the plugin's apiFetch middleware sends a fresh token as a header.
+test("WooCommerce block checkout: a person orders, headless Chromium is refused", async () => {
+  test.skip(!process.env.DK_WC_READY, "set DK_WP=1 DK_WC=1 to run the WooCommerce test");
+  const [product, checkout] = process.env.DK_WC_READY!.split(" ");
+  const order = async (browser: Awaited<ReturnType<typeof chromium.launch>>, human: boolean) => {
+    const page = await browser.newPage();
+    let header = false;
+    page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/wc/store/v1/checkout")) header = !!r.headers()["x-doorkeep-response"]; });
+    await page.goto(`${WP}/?add-to-cart=${product}`);
+    await page.goto(`${WP}/?page_id=${checkout}`);
+    await page.waitForSelector("#email");
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(1500); // block checkout hydration
+    for (const [sel, v] of [["#email", "buyer@example.com"], ["#billing-first_name", "Asha"], ["#billing-last_name", "Kumar"],
+      ["#billing-address_1", "1 Market St"], ["#billing-city", "San Francisco"], ["#billing-postcode", "94103"]]) {
+      if (human) await humanType(page, sel, v); else await page.fill(sel, v);
+    }
+    const place = ".wc-block-components-checkout-place-order-button";
+    if (human) await humanClick(page, place); else await page.click(place);
+    return { page, header: () => header };
+  };
+
+  const b = await chromium.launch(headed);
+  const ok = await order(b, true);
+  await ok.page.waitForURL(/order-received/, { timeout: 30_000 });
+  expect(ok.header()).toBe(true);
+  await b.close();
+
+  const h = await chromium.launch({ headless: true });
+  const bad = await order(h, false);
+  await expect(bad.page.locator(".wc-block-components-notice-banner.is-error")).toContainText("could not verify", { timeout: 30_000 });
+  expect(bad.header()).toBe(true);
+  console.log("woocommerce-block-checkout: person ordered, headless refused");
+  await h.close();
+});

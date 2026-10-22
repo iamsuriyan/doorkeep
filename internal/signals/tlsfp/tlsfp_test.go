@@ -91,3 +91,11 @@ func FuzzParseRecords(f *testing.F) {
 		}
 	})
 }
+
+func TestALPNCode(t *testing.T) {
+	for in, want := range map[string]string{"h2": "h2", "http/1.1": "h1", "h3": "h3", "\xab\xcd": "ad", "\xab": "ab", "x\x01": "71", "a": "aa"} {
+		if got := alpnCode(in); got != want {
+			t.Errorf("alpnCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

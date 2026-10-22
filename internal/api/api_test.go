@@ -38,6 +38,8 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	t.Setenv("DOORKEEP_DATA_DIR", t.TempDir())
+	// Most tests drive the admin API through the one test server.
+	t.Setenv("DOORKEEP_ADMIN_LISTEN", "public")
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatal(err)

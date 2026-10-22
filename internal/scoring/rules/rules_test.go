@@ -228,3 +228,17 @@ func TestEffectiveOverridesAndCustom(t *testing.T) {
 		t.Fatal("EvalOne")
 	}
 }
+
+func TestInformationalRulesCannotCarryWeight(t *testing.T) {
+	base, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := 30
+	if _, err := Effective(base, map[string]Override{"PROFILE_RFP": {Weight: &w}}, "t"); err == nil {
+		t.Fatal("weight override on an informational rule accepted")
+	}
+	if _, err := Parse([]byte("- id: X\n  when: \"prof.rfp == 1\"\n  weight: 5\n  informational: true\n"), "t"); err == nil {
+		t.Fatal("weighted informational rule accepted")
+	}
+}

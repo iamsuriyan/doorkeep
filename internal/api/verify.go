@@ -100,7 +100,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
 	if site.StrictIP {
 		if ipStr := v.Get("remoteip"); ipStr != "" {
-			if a, err := netip.ParseAddr(ipStr); err == nil && s.Keys.IPHash(a, time.Unix(c.IssuedAt, 0)) != c.IP24 {
+			if a, err := netip.ParseAddr(ipStr); err == nil && !s.tokenIPMatches(a, c, now) {
 				verifyFail(w, "invalid-input-response")
 				return
 			}
@@ -134,6 +134,16 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		out.ErrorCodes = append(out.ErrorCodes, "action-mismatch")
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// tokenIPMatches checks a client address against the token's IP hash. The
+// hash was taken when the session was issued, up to nonce.TTL plus
+// nonce.ChallengeTTL before the token was minted, possibly on the previous
+// UTC day.
+func (s *Server) tokenIPMatches(a netip.Addr, c *token.Claims, now time.Time) bool {
+	minted := time.Unix(c.IssuedAt, 0)
+	return s.Keys.IPHashMatches(a, c.IP24, minted, now) ||
+		s.Keys.IPHashMatches(a, c.IP24, minted.Add(-nonce.TTL-nonce.ChallengeTTL), minted)
 }
 
 func hostOf(origin string) string {

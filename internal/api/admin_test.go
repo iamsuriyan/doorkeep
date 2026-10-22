@@ -20,6 +20,7 @@ type adminClient struct {
 	c    *http.Client
 	csrf string
 	bear string
+	hdr  map[string]string // extra request headers (e.g. X-Forwarded-For)
 }
 
 func (h *harness) admin(t *testing.T) *adminClient {
@@ -48,6 +49,9 @@ func (a *adminClient) do(method, path string, body any) (int, map[string]any, []
 	}
 	if a.bear != "" {
 		req.Header.Set("Authorization", "Bearer "+a.bear)
+	}
+	for k, v := range a.hdr {
+		req.Header.Set(k, v)
 	}
 	res, err := a.c.Do(req)
 	if err != nil {
@@ -102,7 +106,7 @@ func TestAdminAuth(t *testing.T) {
 		t.Fatalf("no lockout after %d failures: %d", loginMaxFails, code)
 	}
 	// Bearer tokens work without CSRF.
-	tok, err := NewAdminToken(t.Context(), h.srv.Store, "ci", h.clock)
+	tok, err := NewAdminToken(t.Context(), h.srv.Store, "ci", h.clock, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

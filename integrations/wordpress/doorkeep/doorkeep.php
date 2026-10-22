@@ -3,7 +3,7 @@
  * Plugin Name:       doorkeep
  * Plugin URI:        https://github.com/iamsuriyan/doorkeep
  * Description:       Self-hosted, privacy-preserving bot protection for login, registration, password reset, comments and WooCommerce checkout. No third-party scripts.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * License:           Apache-2.0
@@ -28,8 +28,12 @@ final class Doorkeep_Plugin
             return;
         }
         $o = self::opts();
-        if ($o['login']) {
+        // wp-login.php serves login, registration and lost password: load the
+        // snippet there if any of them is protected.
+        if ($o['login'] || $o['register'] || $o['lostpassword']) {
             add_action('login_enqueue_scripts', [self::class, 'enqueue']);
+        }
+        if ($o['login']) {
             add_action('login_form', [self::class, 'placeholder_login']);
             add_filter('authenticate', [self::class, 'check_login'], 30, 3);
         }
@@ -53,6 +57,9 @@ final class Doorkeep_Plugin
             add_action('wp_enqueue_scripts', [self::class, 'enqueue_front']);
             add_action('woocommerce_review_order_before_submit', [self::class, 'placeholder_checkout']);
             add_action('woocommerce_checkout_process', [self::class, 'check_checkout']);
+            // Block checkout posts to the Store API instead of submitting a form.
+            add_action('woocommerce_store_api_checkout_update_order_from_request', [self::class, 'check_block_checkout'], 10, 2);
+            add_action('wp_enqueue_scripts', [self::class, 'enqueue_block_checkout'], 20);
         }
     }
 
@@ -61,7 +68,7 @@ final class Doorkeep_Plugin
     public static function defaults(): array
     {
         return [
-            'public_url' => '', 'verify_url' => '', 'site_key' => '', 'secret' => '', 'fail_open' => 0,
+            'public_url' => '', 'verify_url' => '', 'site_key' => '', 'secret' => '', 'fail_open' => 0, 'trusted_proxies' => '',
             'login' => 1, 'register' => 1, 'lostpassword' => 1, 'comments' => 1, 'woocommerce' => 0, 'compat' => '',
         ];
     }
@@ -106,7 +113,15 @@ final class Doorkeep_Plugin
         foreach (['fail_open', 'login', 'register', 'lostpassword', 'comments', 'woocommerce'] as $k) {
             $out[$k] = empty($in[$k]) ? 0 : 1;
         }
-        $out['compat'] = in_array($in['compat'] ?? '', ['', 'turnstile', 'recaptcha'], true) ? $in['compat'] : '';
+        $compat = (string)($in['compat'] ?? '');
+        $out['compat'] = in_array($compat, ['turnstile', 'recaptcha'], true) ? $compat : '';
+        $proxies = [];
+        foreach (preg_split('/[\s,]+/', (string)($in['trusted_proxies'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) as $p) {
+            if (self::parse_cidr($p) !== null) {
+                $proxies[] = $p;
+            }
+        }
+        $out['trusted_proxies'] = implode(', ', $proxies);
         return array_merge($d, $out);
     }
 
@@ -143,6 +158,9 @@ final class Doorkeep_Plugin
                         <label><input type="radio" name="<?php echo self::OPT; ?>[fail_open]" value="0" <?php checked($o['fail_open'], 0); ?>> Refuse the request (safer)</label><br>
                         <label><input type="radio" name="<?php echo self::OPT; ?>[fail_open]" value="1" <?php checked($o['fail_open'], 1); ?>> Let it through</label>
                     </fieldset></td></tr>
+                    <tr><th scope="row"><label for="dk-proxies">Trusted proxies</label></th>
+                        <td><input id="dk-proxies" class="regular-text code" name="<?php echo self::OPT; ?>[trusted_proxies]" value="<?php echo esc_attr($o['trusted_proxies']); ?>" placeholder="127.0.0.1, 10.0.0.0/8">
+                        <p class="description">Addresses or CIDR ranges of reverse proxies or a CDN in front of WordPress. Their <code>X-Forwarded-For</code> is used to find the visitor's address; leave empty if visitors connect directly.</p></td></tr>
                     <tr><th scope="row"><label for="dk-compat">Field-name compatibility</label></th><td>
                         <select id="dk-compat" name="<?php echo self::OPT; ?>[compat]">
                             <option value="" <?php selected($o['compat'], ''); ?>>None</option>
@@ -201,10 +219,12 @@ final class Doorkeep_Plugin
     // ---------------- verification ----------------
 
     /** @return array{ok: bool, result: array} */
-    private static function verify(string $action): array
+    private static function verify(string $action, ?string $token = null): array
     {
         $o = self::opts();
-        $token = isset($_POST['dk-response']) ? sanitize_text_field(wp_unslash($_POST['dk-response'])) : '';
+        if ($token === null) {
+            $token = isset($_POST['dk-response']) ? sanitize_text_field(wp_unslash($_POST['dk-response'])) : '';
+        }
         if ($token === '') {
             return ['ok' => false, 'result' => ['error-codes' => ['missing-input-response']]];
         }
@@ -213,7 +233,7 @@ final class Doorkeep_Plugin
             'timeout' => 3,
             'body' => [
                 'secret' => $o['secret'], 'response' => $token, 'expected_action' => $action,
-                'remoteip' => isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '',
+                'remoteip' => self::client_ip(),
             ],
         ]);
         if (is_wp_error($res) || wp_remote_retrieve_response_code($res) >= 500) {
@@ -225,6 +245,66 @@ final class Doorkeep_Plugin
         }
         self::$last = $j;
         return ['ok' => !empty($j['success']), 'result' => $j];
+    }
+
+    /**
+     * The visitor's address: REMOTE_ADDR, or behind configured trusted
+     * proxies the rightmost X-Forwarded-For hop that is not a trusted proxy
+     * (hops further left are whatever the client claimed).
+     */
+    public static function client_ip(): string
+    {
+        $addr = isset($_SERVER['REMOTE_ADDR']) ? trim((string)wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        $trusted = array_filter(array_map([self::class, 'parse_cidr'], preg_split('/[\s,]+/', self::opts()['trusted_proxies'], -1, PREG_SPLIT_NO_EMPTY)));
+        if (!$trusted || !self::in_any($addr, $trusted)) {
+            return filter_var($addr, FILTER_VALIDATE_IP) ? $addr : '';
+        }
+        $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? (string)wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']) : '';
+        foreach (array_reverse(array_map('trim', explode(',', $xff))) as $hop) {
+            if (!filter_var($hop, FILTER_VALIDATE_IP)) {
+                break;
+            }
+            $addr = $hop;
+            if (!self::in_any($hop, $trusted)) {
+                break;
+            }
+        }
+        return $addr;
+    }
+
+    /** @return array{0: string, 1: int}|null packed network and prefix length */
+    public static function parse_cidr(string $s): ?array
+    {
+        [$ip, $bits] = array_pad(explode('/', trim($s), 2), 2, null);
+        $packed = @inet_pton((string)$ip);
+        if ($packed === false) {
+            return null;
+        }
+        $max = strlen($packed) * 8;
+        $bits = $bits === null ? $max : (ctype_digit($bits) ? (int)$bits : -1);
+        return ($bits < 0 || $bits > $max) ? null : [$packed, $bits];
+    }
+
+    private static function in_any(string $ip, array $nets): bool
+    {
+        $p = @inet_pton($ip);
+        if ($p === false) {
+            return false;
+        }
+        foreach ($nets as [$net, $bits]) {
+            if (strlen($net) !== strlen($p)) {
+                continue;
+            }
+            $full = intdiv($bits, 8);
+            $rest = $bits % 8;
+            if (substr($p, 0, $full) !== substr($net, 0, $full)) {
+                continue;
+            }
+            if ($rest === 0 || ((ord($p[$full]) ^ ord($net[$full])) & (0xFF << (8 - $rest)) & 0xFF) === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function message(): string
@@ -301,6 +381,32 @@ final class Doorkeep_Plugin
         if (!$v['ok'] && function_exists('wc_add_notice')) {
             wc_add_notice(wp_strip_all_tags(self::message()), 'error');
         }
+    }
+
+    /**
+     * Block checkout: the token arrives as an X-Doorkeep-Response header on
+     * the Store API checkout request (added by the apiFetch middleware in
+     * enqueue_block_checkout). Throwing a RouteException rejects the order.
+     */
+    public static function check_block_checkout($order, $request): void
+    {
+        $token = sanitize_text_field((string)$request->get_header('x-doorkeep-response'));
+        $v = self::verify('checkout', $token);
+        if (!$v['ok']) {
+            throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException('doorkeep_failed', wp_strip_all_tags(self::message()), 403);
+        }
+    }
+
+    /**
+     * On the block checkout page, add the apiFetch middleware (block-checkout.js)
+     * that attaches a fresh token to the Store API checkout request.
+     */
+    public static function enqueue_block_checkout(): void
+    {
+        if (!function_exists('is_checkout') || !is_checkout() || !wp_script_is('doorkeep', 'enqueued')) {
+            return;
+        }
+        wp_enqueue_script('doorkeep-block-checkout', plugins_url('block-checkout.js', __FILE__), ['wp-api-fetch', 'doorkeep'], '0.2.0', ['in_footer' => true]);
     }
 }
 

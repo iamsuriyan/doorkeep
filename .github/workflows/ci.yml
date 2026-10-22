@@ -52,3 +52,20 @@ jobs:
           SIZE=$(gzip -c web/snippet/dist/dk.js | wc -c)
           echo "dk.js gzip: $SIZE bytes"
           test "$SIZE" -le 14336
+      - name: embedded assets match the sources
+        run: git diff --exit-code internal/api/assets
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ["8.1", "8.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: none
+      - name: lint
+        run: find integrations/php integrations/wordpress -name '*.php' -print0 | xargs -0 -n1 php -l
+      - run: php integrations/php/tests/run.php
+      - run: php -d error_reporting=E_ALL integrations/wordpress/tests/run.php

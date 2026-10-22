@@ -26,3 +26,14 @@ $WP wp core install --url=http://localhost:18186 --title=doorkeep-wp --admin_use
 $WP wp plugin activate doorkeep >/dev/null
 $WP wp option update doorkeep_settings "{\"public_url\":\"http://127.0.0.1:18181\",\"verify_url\":\"http://127.0.0.1:18181\",\"site_key\":\"$KEY\",\"secret\":\"$SECRET\",\"fail_open\":0,\"login\":1,\"register\":1,\"lostpassword\":1,\"comments\":1,\"woocommerce\":0,\"compat\":\"\"}" --format=json >/dev/null
 $WP wp doorkeep test
+# WooCommerce block checkout (opt-in: DK_WC=1; downloads WooCommerce).
+rm -f "$HERE/.wc"
+if [ "${DK_WC:-}" = "1" ]; then
+  $WP wp plugin install woocommerce --version=10.2.2 --activate >/dev/null
+  $WP wp option update woocommerce_cod_settings --format=json '{"enabled":"yes","title":"Cash on delivery","description":"","instructions":"","enable_for_methods":[],"enable_for_virtual":"yes"}' >/dev/null
+  PRODUCT=$($WP wp wc product create --name=Door --type=simple --regular_price=10 --virtual=true --user=admin --porcelain)
+  CHECKOUT=$($WP wp option get woocommerce_checkout_page_id)
+  $WP wp option update woocommerce_coming_soon no >/dev/null   # new stores start hidden
+  $WP wp option patch update doorkeep_settings woocommerce 1 >/dev/null
+  echo "$PRODUCT $CHECKOUT" > "$HERE/.wc"
+fi

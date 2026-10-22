@@ -69,10 +69,9 @@ func (r *Registry) Score(site string, f scoring.Features) Result {
 	res := Result{ShadowLR: -1}
 	hr, cs := r.h(site).Score(f, r.h(GlobalID))
 	res.Risk, res.Weight, res.Contributions = hr, WeightHBOS, cs
-	lr := r.LR(site)
-	if lr.Labels > 0 {
-		p := int(lr.Prob(f) * 100)
-		if lr.Promoted {
+	if labels, promoted, prob := r.LR(site).assess(f); labels > 0 {
+		p := int(prob * 100)
+		if promoted {
 			res.Risk, res.Weight = max(hr, p), WeightPromoted
 		} else {
 			res.ShadowLR = p

@@ -49,7 +49,8 @@ docker compose -f deploy/docker-compose.yml run --rm doorkeep admin create --use
 The dashboard shows traffic by outcome, the reasons behind decisions, every
 event with its signals, per-site rule overrides with a rule lab that replays
 a change over the last week before you enforce it, allow and deny lists,
-model status, and a privacy data map.
+model status, API tokens and a privacy data map
+(also `doorkeep export-datamap`).
 
 Proxy `/_dk/` on your site to doorkeep (same origin, no CORS, not blockable as
 a third-party host), then add the snippet and a placeholder inside your form:
@@ -114,8 +115,12 @@ Known gaps are tracked in the open in
 
 Go, Node.js, Next.js, PHP and WordPress clients, plus edge mode for nginx,
 Caddy and Traefik (protect whole paths with the proxy's built-in auth
-sub-request; no modules). Next.js, WordPress, nginx and Caddy are tested end
-to end with real browsers. See [docs/integrations](docs/integrations).
+sub-request; no modules), and `dk-ja4`, a small TLS front that adds JA4 and
+HTTP/2 fingerprints behind any proxy. Next.js, WordPress, nginx, Caddy and
+Traefik are tested end to end with real browsers. See
+[docs/integrations](docs/integrations) and the
+[examples](examples): a plain HTML form, Next.js, a WordPress stack and
+Forgejo behind nginx.
 
 ### Challenges
 
@@ -128,15 +133,18 @@ checks in CI. Risk 75 and above is blocked. Like every captcha, the visual
 challenge is solvable by a multimodal model; it is a cost and a human path,
 not a security boundary.
 
-The design is in [docs/design/v1.md](docs/design/v1.md). The research that
-motivated the project is in [docs/research](docs/research).
+How a decision is made is in [docs/concepts](docs/concepts/README.md), what
+is collected and kept in [docs/privacy](docs/privacy/README.md). The design
+is in [docs/design/v1.md](docs/design/v1.md). The research that motivated the
+project is in [docs/research](docs/research).
 
 ## Development
 
 ```sh
-make test      # Go unit and API tests, snippet unit tests
-make e2e       # real-browser detection matrix (needs xvfb)
-make build     # snippet + binary
+make test      # Go unit and API tests (including the golden corpus), web unit tests
+make e2e       # real-browser detection matrix and edge proxies (needs xvfb, Docker)
+make fuzz      # fuzz the payload, token, TLS and HTTP/2 parsers
+make build     # snippet + dashboard + binary
 ```
 
 ## Principles

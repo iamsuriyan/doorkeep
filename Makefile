@@ -1,7 +1,7 @@
 GO ?= go
 BIN := bin/doorkeep
 
-.PHONY: build dev test e2e lint snippet dashboard docs
+.PHONY: build dev test e2e lint fuzz snippet dashboard docs
 
 build: snippet dashboard
 	$(GO) build -o $(BIN) ./cmd/doorkeep
@@ -12,6 +12,13 @@ dev:
 test:
 	$(GO) test -race -count=1 ./...
 	pnpm --filter @doorkeep/snippet --filter @doorkeep/dashboard --filter @doorkeep/verify --filter @doorkeep/next test
+
+FUZZTIME ?= 30s
+fuzz:
+	$(GO) test -run='^$$' -fuzz=FuzzDecode -fuzztime=$(FUZZTIME) ./internal/signals/payload
+	$(GO) test -run='^$$' -fuzz=FuzzOpen -fuzztime=$(FUZZTIME) ./internal/token
+	$(GO) test -run='^$$' -fuzz=FuzzParse -fuzztime=$(FUZZTIME) ./internal/signals/h2fp
+	$(GO) test -run='^$$' -fuzz=FuzzParseRecords -fuzztime=$(FUZZTIME) ./internal/signals/tlsfp
 
 docs:
 	$(GO) run ./tools/docgen -out docs/reference

@@ -1,0 +1,10 @@
+{
+  "name": "Default headless Chromium (Playwright), no stealth",
+  "source": "Signals measured by testing/e2e/tests/detection.spec.ts against Chromium headless",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 1, "auto.headless_ua": 1, "beh.total_events": 0, "t.elapsed_s": 0.4},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "linux", "fp.gpu_class": "software", "auto.eng": "v8"}
+  },
+  "expect": {"outcome": "block", "min_risk": 100, "fires": ["AUTOMATION_WEBDRIVER", "HEADLESS_UA", "SOFTWARE_GPU", "NO_INTERACTION_FAST_SUBMIT"]}
+}

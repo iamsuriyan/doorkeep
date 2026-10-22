@@ -155,3 +155,34 @@ func TestSnapshotRoundTrip(t *testing.T) {
 		t.Fatalf("snapshot changed scores: %+v vs %+v", before, after)
 	}
 }
+
+// TestRegistryConcurrent exercises scoring, labelling and promotion from
+// several goroutines; run with -race.
+func TestRegistryConcurrent(t *testing.T) {
+	reg := NewRegistry(time.Now)
+	done := make(chan struct{})
+	for g := range 4 {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			r := rand.New(rand.NewPCG(uint64(g), 1))
+			for i := range 300 {
+				f := human(r)
+				switch i % 4 {
+				case 0:
+					reg.Label("s", f, i%8 == 0, 1)
+				case 1:
+					reg.Promote("s", i%2 == 0)
+				case 2:
+					reg.ObserveAllowed("s", f, 0, scoring.Allow)
+				default:
+					reg.Score("s", f)
+				}
+			}
+		}()
+	}
+	for range 4 {
+		<-done
+	}
+	// Scoring the global model directly must not self-deadlock.
+	reg.Score(GlobalID, robot())
+}

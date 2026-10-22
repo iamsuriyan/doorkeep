@@ -57,7 +57,10 @@ final class Verifier
         $body = @file_get_contents($this->endpoint . $path, false, $ctx);
         if ($body === false) return null;
         $status = 0;
-        foreach ($http_response_header ?? [] as $h) {
+        // PHP 8.4+ exposes the headers through a function; older versions
+        // through the $http_response_header local.
+        $headers = function_exists('http_get_last_response_headers') ? (http_get_last_response_headers() ?? []) : ($http_response_header ?? []);
+        foreach ($headers as $h) {
             if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $status = (int)$m[1];
         }
         if ($status >= 500) return null;
@@ -65,5 +68,3 @@ final class Verifier
         return is_array($json) ? $json : null;
     }
 }
-
-final class UnavailableException extends \RuntimeException {}

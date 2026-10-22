@@ -65,8 +65,12 @@ func (s *Server) connPrints(r *http.Request) (ja4 string, offersH2 *bool, h2 *h2
 	if ja4 == "" && s.fromTrustedProxy(r) {
 		for _, part := range strings.Split(r.Header.Get("Doorkeep-TLS"), ";") {
 			k, v, _ := strings.Cut(strings.TrimSpace(part), "=")
-			if k == "ja4" && v != "" {
+			switch {
+			case k == "ja4" && v != "":
 				ja4 = v
+			case k == "h2" && (v == "0" || v == "1"):
+				b := v == "1"
+				offersH2 = &b
 			}
 		}
 		h2Text = r.Header.Get("Doorkeep-H2")
@@ -87,8 +91,8 @@ func (s *Server) fromTrustedProxy(r *http.Request) bool {
 	return ok && s.Cfg.Trusted(a)
 }
 
-// DebugConnPrints exposes connection fingerprints without a Server (used by
-// the measurement tool).
+// DebugConnPrints exposes the fingerprints of a connection terminated with
+// ConfigureTLS, without a Server (used by the measurement tool and dk-ja4).
 func DebugConnPrints(r *http.Request) (string, *bool, *h2fp.Print, string) {
 	return (&Server{}).connPrintsNoProxy(r)
 }

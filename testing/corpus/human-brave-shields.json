@@ -1,0 +1,11 @@
+{
+  "name": "Brave with Shields (farbled GPU, no client hints)",
+  "source": "Design principle: Brave farbling is a profile, not a contradiction",
+  "action": "login",
+  "features": {
+    "num": {"prof.brave": 1, "net.ch_missing": 1, "fp.gpu_os_mismatch": 1, "auto.chrome_obj": 2, "auto.wd": 0, "beh.total_events": 80,
+            "beh.key_count": 16, "beh.key_hold_cv": 0.3, "beh.key_interval_cv": 0.4, "beh.untrusted_frac": 0, "t.elapsed_s": 11},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "macos", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 0, "fires": ["PROFILE_BRAVE"], "not_fires": ["UA_CH_MISSING", "GPU_OS_MISMATCH", "CHROME_OBJECT_FAKE"]}
+}

@@ -1,0 +1,13 @@
+# Keep the build context small and free of local state.
+.git
+.claude
+**/node_modules
+bin
+data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+testing/e2e/test-results
+examples/nextjs-signup/.next
+integrations/*/dist
+web/snippet/dist

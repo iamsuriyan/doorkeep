@@ -30,12 +30,15 @@ const (
 
 // Rule is one weighted rule.
 type Rule struct {
-	ID            string `yaml:"id" json:"id"`
-	When          string `yaml:"when" json:"when"`
-	Unless        string `yaml:"unless,omitempty" json:"unless,omitempty"`
-	Weight        int    `yaml:"weight" json:"weight"`
-	Mode          Mode   `yaml:"mode,omitempty" json:"mode,omitempty"`
-	Informational bool   `yaml:"informational,omitempty" json:"informational,omitempty"`
+	ID     string `yaml:"id" json:"id"`
+	When   string `yaml:"when" json:"when"`
+	Unless string `yaml:"unless,omitempty" json:"unless,omitempty"`
+	Weight int    `yaml:"weight" json:"weight"`
+	Mode   Mode   `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Informational rules only label an event (e.g. a privacy browser
+	// profile). They must carry no weight and cannot be floors, so neither
+	// the built-ins nor a per-site override can turn them into a penalty.
+	Informational bool `yaml:"informational,omitempty" json:"informational,omitempty"`
 	// Floor marks a rule as proof rather than evidence: when it fires, the
 	// rules risk is at least its weight, so negative "human evidence" rules
 	// (which an attacker can replay) can never cancel it.
@@ -85,6 +88,9 @@ func Compile(rs []*Rule, version string) (*Set, error) {
 		}
 		if r.Weight < -100 || r.Weight > 100 {
 			return nil, fmt.Errorf("rules: %s weight out of range", r.ID)
+		}
+		if r.Informational && (r.Weight != 0 || r.Floor) {
+			return nil, fmt.Errorf("rules: %s is informational and cannot carry weight or be a floor", r.ID)
 		}
 		if err := checkFeatureRefs(r.When + " " + r.Unless); err != nil {
 			return nil, fmt.Errorf("rules: %s: %w", r.ID, err)
