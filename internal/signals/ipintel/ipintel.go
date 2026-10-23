@@ -32,6 +32,9 @@ type Info struct {
 	Tor     bool
 	Drop    bool
 	Crawler string // e.g. "googlebot", "" if not a verified crawler range
+	// Blocklist names a configured reputation list containing the address
+	// ("" if none).
+	Blocklist string
 }
 
 type rng struct {
@@ -48,7 +51,9 @@ type DB struct {
 	tor      map[netip.Addr]bool
 	drop     []netip.Prefix
 	crawlers map[string][]netip.Prefix
+	block    *rangeSet
 	Loaded   time.Time
+	Updated  time.Time // last download (sources.json), zero if unknown
 	Sources  []string
 }
 
@@ -67,7 +72,7 @@ func (s *Store) Get() *DB {
 func (s *Store) Set(d *DB) { s.p.Store(d) }
 
 func empty() *DB {
-	return &DB{desc: map[uint32]string{}, hosting: hostingASNs(), tor: map[netip.Addr]bool{}, crawlers: map[string][]netip.Prefix{}}
+	return &DB{desc: map[uint32]string{}, hosting: hostingASNs(), tor: map[netip.Addr]bool{}, crawlers: map[string][]netip.Prefix{}, block: &rangeSet{}}
 }
 
 // Lookup classifies addr.
@@ -87,6 +92,7 @@ func (d *DB) Lookup(addr netip.Addr) Info {
 		info.Class = classify(info.ASN, d.desc[info.ASN], d.hosting)
 	}
 	info.Tor = d.tor[addr]
+	info.Blocklist = d.block.lookup(addr)
 	for _, p := range d.drop {
 		if p.Contains(addr) {
 			info.Drop = true
@@ -180,10 +186,12 @@ const (
 	FileCrawlers = "crawlers.json"
 )
 
-// Load reads whatever files exist in dir. Missing files are skipped and a
-// file that fails to parse does not discard the others: the returned DB is
-// always usable, and err (if any) describes what was skipped.
-func Load(dir string) (*DB, error) {
+// Load reads whatever files exist in dir, plus the named blocklists.
+// Missing files are skipped and a file that fails to parse does not discard
+// the others: the returned DB is always usable, and err (if any) describes
+// what was skipped. Only configured blocklists are used, so removing one
+// from the configuration takes effect without deleting its file.
+func Load(dir string, blocklists []string) (*DB, error) {
 	d := empty()
 	d.Loaded = time.Now()
 	var errs []error
@@ -222,6 +230,22 @@ func Load(dir string) (*DB, error) {
 			}
 			d.Sources = append(d.Sources, "published crawler ranges")
 		}
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "sources.json")); err == nil {
+		var m struct {
+			Updated time.Time `json:"updated"`
+		}
+		if json.Unmarshal(b, &m) == nil {
+			d.Updated = m.Updated
+		}
+	}
+	bl, loaded, err := loadBlocklists(dir, blocklists)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	d.block = bl
+	for _, n := range loaded {
+		d.Sources = append(d.Sources, "blocklist "+n)
 	}
 	return d, errors.Join(errs...)
 }
@@ -315,5 +339,5 @@ func (d *DB) parseASN(r io.Reader) error {
 
 // Counts reports table sizes (for /readyz and the dashboard).
 func (d *DB) Counts() map[string]int {
-	return map[string]int{"v4": len(d.v4), "v6": len(d.v6), "tor": len(d.tor), "drop": len(d.drop), "hosting_asns": len(d.hosting)}
+	return map[string]int{"v4": len(d.v4), "v6": len(d.v6), "tor": len(d.tor), "drop": len(d.drop), "blocklist": d.block.len(), "hosting_asns": len(d.hosting)}
 }

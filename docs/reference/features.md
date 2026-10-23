@@ -154,6 +154,7 @@ Every event stores these bucketed features (never raw signals). Rules address th
 | `net.asn_class` | cat: hosting, isp, mobile, edu, gov, unknown | yes | ASN class from ipdata |
 | `net.ip_tor` | bool | yes | Source IP is a Tor exit |
 | `net.ip_drop` | bool | yes | Source IP in Spamhaus DROP/EDROP |
+| `net.ip_blocklist` | bool |  | Address is on a configured IP reputation list (FireHOL level 1 by default) |
 | `net.ip_known_crawler` | bool | yes | Source IP belongs to a verified crawler publisher |
 | `net.ip_country` | cat | yes | Country of the source IP (lowercase ISO alpha-2) |
 | `net.tz_ip_country_match` | bucket: mismatch, match, unknown | yes | Timezone country vs IP country |

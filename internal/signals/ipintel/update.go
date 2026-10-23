@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -70,9 +71,10 @@ var crawlerFeeds = map[string]string{
 	"gptbot":    "https://openai.com/gptbot.json",
 }
 
-// Update downloads every source into dir atomically. Failures of one
-// source do not discard the others; the returned error lists failures.
-func Update(ctx context.Context, dir string, client *http.Client) error {
+// Update downloads every source and the given blocklists into dir
+// atomically. Failures of one source do not discard the others; the
+// returned error lists failures.
+func Update(ctx context.Context, dir string, client *http.Client, blocklists []Blocklist) error {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	}
@@ -88,6 +90,17 @@ func Update(ctx context.Context, dir string, client *http.Client) error {
 			continue
 		}
 		got = append(got, map[string]string{"name": s.Name, "url": s.URL, "license": s.License})
+	}
+	for _, l := range blocklists {
+		if !ValidBlocklistName(l.Name) {
+			failed = append(failed, fmt.Sprintf("blocklist %q: invalid name", l.Name))
+			continue
+		}
+		if err := fetchTo(ctx, client, l.URL, filepath.Join(dir, blocklistFile(l.Name)), validBlocklist); err != nil {
+			failed = append(failed, fmt.Sprintf("blocklist %s: %v", l.Name, err))
+			continue
+		}
+		got = append(got, map[string]string{"name": "blocklist " + l.Name, "url": redactURL(l.URL), "license": "See the list's publisher"})
 	}
 	// Start from the previous file so a feed that fails this time keeps its
 	// last good ranges instead of disappearing.
@@ -189,6 +202,15 @@ func fetchJSON(ctx context.Context, c *http.Client, url string, v any) error {
 		return fmt.Errorf("HTTP %d", res.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(res.Body, 32<<20)).Decode(v)
+}
+
+// redactURL drops credentials before a URL is written to sources.json.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Redacted()
 }
 
 func writeAtomic(path string, b []byte) error {

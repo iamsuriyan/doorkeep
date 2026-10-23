@@ -31,7 +31,7 @@ func withIPData(t *testing.T, h *harness) {
 	w.Write(tsv.Bytes())
 	w.Close()
 	os.WriteFile(filepath.Join(dir, ipintel.FileASN), gz.Bytes(), 0o600)
-	db, err := ipintel.Load(dir)
+	db, err := ipintel.Load(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

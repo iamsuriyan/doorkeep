@@ -14,6 +14,11 @@ function wp_unslash($v) { return $v; }
 function esc_url_raw($u, $p = null) { return $u; }
 function sanitize_text_field($v) { return trim((string)$v); }
 function esc_attr($v) { return htmlspecialchars((string)$v, ENT_QUOTES); }
+function esc_html($v) { return htmlspecialchars((string)$v, ENT_QUOTES); }
+function esc_html__($t, $d = null) { return esc_html($t); }
+function wp_kses_post($v) { return (string)$v; }
+function wp_kses($v, $allowed) { return (string)$v; }
+function wp_strip_all_tags($v) { return strip_tags((string)$v); }
 function __($t, $d = null) { return $t; }
 function is_wp_error($x) { return $x instanceof WP_Error; }
 function is_admin() { return $GLOBALS['dk_is_admin'] ?? false; }

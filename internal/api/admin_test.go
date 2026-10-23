@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -248,5 +249,53 @@ func TestAdminListenSeparatesAdmin(t *testing.T) {
 	res, _ = http.Post(adm.URL+"/v1/siteverify", "application/x-www-form-urlencoded", nil)
 	if res.StatusCode != 404 {
 		t.Fatalf("public API on admin listener: %d", res.StatusCode)
+	}
+}
+
+func TestBulkLabel(t *testing.T) {
+	h := newHarness(t)
+	ids := map[string]string{}
+	for i, headless := range []bool{false, false, true, true, true} {
+		n, _ := h.session("signup")
+		h.clock = h.clock.Add(10 * time.Second)
+		p := humanPayloadAfter(n, 10*time.Second)
+		p.FP.CV.H = n[:11]
+		if headless {
+			p.Auto.WD = 1
+		}
+		h.post("/v1/submit", encode(p), browserHeaders())
+		nn, _ := h.srv.Store.Get(t.Context(), n)
+		ids[fmt.Sprint(i)] = nn.EventID
+	}
+	a := h.admin(t)
+	a.login("correct horse battery staple")
+
+	// By filter: every blocked event.
+	code, out, _ := a.do("POST", "/admin/v1/sites/site1/labels", map[string]any{"label": "bot", "filter": map[string]string{"outcome": "block"}})
+	if code != 200 || out["labelled"] != float64(3) {
+		t.Fatalf("by filter: %d %v", code, out)
+	}
+	// By ids, including one from another site and one unknown: ignored.
+	code, out, _ = a.do("POST", "/admin/v1/sites/site1/labels", map[string]any{"label": "human", "ids": []string{ids["0"], ids["1"], "evt_unknown"}})
+	if code != 200 || out["labelled"] != float64(2) {
+		t.Fatalf("by ids: %d %v", code, out)
+	}
+	_, _, arr := a.do("GET", "/admin/v1/sites/site1/events?label=bot", nil)
+	if len(arr) != 3 {
+		t.Fatalf("bot-labelled events: %d", len(arr))
+	}
+	if st := h.srv.Models.Status("site1"); st.LR.Labels != 5 {
+		t.Fatalf("model saw %d labels, want 5", st.LR.Labels)
+	}
+	// Cross-site ids are never labelled.
+	code, out, _ = a.do("POST", "/admin/v1/sites/site2/labels", map[string]any{"label": "bot", "ids": []string{ids["0"]}})
+	if code != 200 || out["labelled"] != float64(0) {
+		t.Fatalf("cross-site: %d %v", code, out)
+	}
+	// Exactly one of ids or filter.
+	for _, bad := range []map[string]any{{"label": "bot"}, {"label": "bot", "ids": []string{"x"}, "filter": map[string]string{}}, {"label": "spam", "ids": []string{"x"}}} {
+		if code, _, _ := a.do("POST", "/admin/v1/sites/site1/labels", bad); code != 400 {
+			t.Errorf("%v: %d", bad, code)
+		}
 	}
 }

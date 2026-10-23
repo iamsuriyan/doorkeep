@@ -37,5 +37,37 @@
     2026-10-22, synthesised human evidence no longer cancels a device
     self-contradiction. Remaining defences are volume and distribution
     (fingerprint and canvas velocity across networks, subnet device farms,
-    cadence) and per-site thresholds. Not yet measured: patchright, Camoufox,
-    Nodriver.
+    cadence) and per-site thresholds.
+
+# Measured 2026-10-23 with tests/advanced.spec.ts (DK_ADVANCED=1).
+
+- signal: patchright, headed, default input (fill, click)
+  setup: tests/advanced.spec.ts
+  status: caught (held at the visual challenge, risk 70)
+  note: >
+    patchright removes the CDP and automation leaks, so detection is
+    behavioural: fields filled without key presses and exact-centre clicks
+    of about 1 ms. It was allowed (risk 40, proof of work only) until
+    PROGRAMMATIC_FILL_AND_CLICK stopped requiring zero key events.
+
+- signal: Nodriver, headed, CDP key and mouse events
+  setup: tests/advanced.spec.ts, testing/stealth/nodriver_run.py
+  status: caught (visual challenge or refused, 6 of 6 runs)
+  note: >
+    Same behavioural tells as patchright. Its synthesised pointer path used
+    to earn HUMAN_POINTER_EVIDENCE; human-evidence rules no longer apply when
+    the clicks themselves are scripted.
+
+- signal: patchright, headed, synthesised human-like input
+  setup: tests/advanced.spec.ts (curved paths, jittered keys, real press durations)
+  status: allowed (risk 0)
+  note: >
+    No leaks and no behavioural tells. Same class as the stealth-plugin miss
+    above: only volume and distribution signals can catch it.
+
+- signal: Camoufox, humanized
+  setup: tests/advanced.spec.ts, testing/stealth/camoufox_run.py
+  status: not yet measured
+  note: >
+    Its browser is a 1.3 GB download; measured by the scheduled advanced
+    workflow (.github/workflows/advanced.yml) rather than locally.

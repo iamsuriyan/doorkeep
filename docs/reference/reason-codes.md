@@ -26,7 +26,7 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `UA_FEATURE_MISMATCH` | +30 |  | Available JavaScript features do not match the claimed browser version | `fp.feat_mismatch >= 2` | `prof.rfp == 1` |
 | `GPU_OS_MISMATCH` | +30 |  | GPU vendor is impossible for the claimed operating system | `fp.gpu_os_mismatch == 1` | `prof.rfp == 1 \|\| prof.brave == 1` |
 | `ROBOTIC_POINTER_PATH` | +30 |  | Pointer moved in a perfectly straight line at perfectly even intervals | `beh.ptr_samples >= 10 && beh.ptr_collinear_frac >= 0.95 && beh.ptr_interval_cv < 0.05` |  |
-| `PROGRAMMATIC_FILL_AND_CLICK` | +30 |  | Fields filled without any key presses and a near-zero press (scripted form fill) | `beh.input_no_key_frac >= 0.9 && beh.key_count < 1 && beh.click_count >= 1 && beh.click_dur_mean < 20` |  |
+| `PROGRAMMATIC_FILL_AND_CLICK` | +30 |  | Fields filled without any key presses and a near-zero press (scripted form fill) | `beh.input_no_key_frac >= 0.9 && beh.click_count >= 1 && beh.click_dur_mean < 20` |  |
 | `ROBOTIC_TYPING` | +30 |  | Typing with zero key hold time and perfectly even rhythm | `beh.key_count >= 8 && beh.key_hold_mean < 1 && beh.key_interval_cv < 0.02` |  |
 | `UA_CH_MISMATCH` | +30 |  | Client hints contradict the user agent | `net.ch_mismatch == 1` |  |
 | `FP_MULTI_NETWORK` | +30 |  | One device fingerprint seen from several networks in ten minutes | `vel.fp_distinct_ip24_10m >= 4` |  |
@@ -40,6 +40,7 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `COLLECTION_TOO_FAST` | +25 |  | Expensive signals reported complete faster than possible | `t.collect_too_fast == 1` |  |
 | `UA_CH_UNEXPECTED` | +25 |  | Non-Chromium browser sent Chromium client hints | `net.ch_unexpected == 1` |  |
 | `FETCH_METADATA_MISSING` | +25 |  | Modern browser user agent without Sec-Fetch headers | `net.fetch_metadata_missing == 1` |  |
+| `IP_BLOCKLIST` | +25 |  | Address is on a configured IP reputation list (FireHOL level 1 by default) | `net.ip_blocklist == 1` |  |
 | `SUBNET_DEVICE_FARM` | +25 |  | Very many distinct devices from one subnet | `vel.ip24_distinct_fp_10m >= 50` |  |
 | `WINDOW_GEOMETRY_ZERO` | +20 |  | Window outer size is zero | `auto.outer_zero == 1` |  |
 | `PLUGINS_NON_NATIVE` | +20 |  | navigator.plugins is faked or inconsistent | `auto.plugins_shape == 2 \|\| auto.plugins_shape == 3` |  |
@@ -70,8 +71,8 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `TIMEZONE_IP_COUNTRY_MISMATCH` | +5 |  | Timezone country differs from IP country (weak; travel and VPNs) | `net.tz_ip_country_match == 0` | `prof.rfp == 1` |
 | `PROFILE_RFP` | +0 |  | Privacy-hardened browser (Firefox resistFingerprinting or Tor); consistency rules relaxed | `prof.rfp == 1` |  |
 | `PROFILE_BRAVE` | +0 |  | Brave fingerprint protection; consistency rules relaxed | `prof.brave == 1` |  |
-| `HUMAN_TYPING_EVIDENCE` | -10 |  | Natural, trusted keyboard rhythm observed | `beh.key_count >= 8 && beh.key_hold_cv > 0.15 && beh.key_interval_cv > 0.2 && beh.untrusted_frac < 0.05` | `fp.font_os_mismatch == 1 \|\| fp.gpu_os_mismatch == 1 \|\| fp.uad_mismatch == 1 \|\| fp.feat_mismatch >= 2 \|\| net.ua_hdr_js_mismatch == 1 \|\| net.ch_mismatch == 1 \|\| net.tls_ua_mismatch == 1 \|\| net.h2_ua_mismatch == 1 \|\| auto.wd_tamper == 1` |
-| `HUMAN_POINTER_EVIDENCE` | -15 |  | Natural, trusted pointer movement observed | `beh.ptr_samples > 30 && beh.ptr_straightness < 0.9 && beh.ptr_interval_cv > 0.2 && beh.untrusted_frac < 0.05` | `fp.font_os_mismatch == 1 \|\| fp.gpu_os_mismatch == 1 \|\| fp.uad_mismatch == 1 \|\| fp.feat_mismatch >= 2 \|\| net.ua_hdr_js_mismatch == 1 \|\| net.ch_mismatch == 1 \|\| net.tls_ua_mismatch == 1 \|\| net.h2_ua_mismatch == 1 \|\| auto.wd_tamper == 1` |
+| `HUMAN_TYPING_EVIDENCE` | -10 |  | Natural, trusted keyboard rhythm observed | `beh.key_count >= 8 && beh.key_hold_cv > 0.15 && beh.key_interval_cv > 0.2 && beh.untrusted_frac < 0.05` | `fp.font_os_mismatch == 1 \|\| fp.gpu_os_mismatch == 1 \|\| fp.uad_mismatch == 1 \|\| fp.feat_mismatch >= 2 \|\| net.ua_hdr_js_mismatch == 1 \|\| net.ch_mismatch == 1 \|\| net.tls_ua_mismatch == 1 \|\| net.h2_ua_mismatch == 1 \|\| auto.wd_tamper == 1 \|\| (beh.click_count >= 1 && beh.click_dur_mean < 20)` |
+| `HUMAN_POINTER_EVIDENCE` | -15 |  | Natural, trusted pointer movement observed | `beh.ptr_samples > 30 && beh.ptr_straightness < 0.9 && beh.ptr_interval_cv > 0.2 && beh.untrusted_frac < 0.05` | `fp.font_os_mismatch == 1 \|\| fp.gpu_os_mismatch == 1 \|\| fp.uad_mismatch == 1 \|\| fp.feat_mismatch >= 2 \|\| net.ua_hdr_js_mismatch == 1 \|\| net.ch_mismatch == 1 \|\| net.tls_ua_mismatch == 1 \|\| net.h2_ua_mismatch == 1 \|\| auto.wd_tamper == 1 \|\| (beh.click_count >= 1 && beh.click_dur_mean < 20)` |
 
 Other codes you may see on events:
 

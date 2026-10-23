@@ -62,12 +62,12 @@ func TestUpdateKeepsGoodDataOnFailure(t *testing.T) {
 	crawlerFeeds = map[string]string{"googlebot": srv.URL + "/google", "bingbot": srv.URL + "/bing"}
 
 	dir := t.TempDir()
-	if err := Update(t.Context(), dir, srv.Client()); err != nil {
+	if err := Update(t.Context(), dir, srv.Client(), nil); err != nil {
 		t.Fatal(err)
 	}
 	check := func(stage string) {
 		t.Helper()
-		db, err := Load(dir)
+		db, err := Load(dir, nil)
 		if err != nil {
 			t.Fatalf("%s: load: %v", stage, err)
 		}
@@ -85,7 +85,7 @@ func TestUpdateKeepsGoodDataOnFailure(t *testing.T) {
 	check("first update")
 
 	broken.Store(true)
-	if err := Update(t.Context(), dir, srv.Client()); err == nil {
+	if err := Update(t.Context(), dir, srv.Client(), nil); err == nil {
 		t.Fatal("expected an error for the broken sources")
 	}
 	check("after failed update")
@@ -97,7 +97,7 @@ func TestLoadPartial(t *testing.T) {
 	if err := writeAtomic(dir+"/"+FileASN, []byte("not gzip")); err != nil {
 		t.Fatal(err)
 	}
-	db, err := Load(dir)
+	db, err := Load(dir, nil)
 	if err == nil {
 		t.Fatal("expected an error for the corrupt ASN file")
 	}

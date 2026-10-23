@@ -269,6 +269,25 @@ function Events({ site, openId }: { site: Site; openId?: string }) {
   const [open, setOpen] = useState<string | null>(openId || null);
   const params = new URLSearchParams({ limit: "200", ...(outcome && { outcome }), ...(reason && { reason }), ...(fp && { fp }), ...(ip && { ip }) });
   const [evs, err, reload] = useLoad(() => api<Event[]>("GET", `/sites/${site.id}/events?${params}`), [site.id, outcome, reason, fp, ip]);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [note, setNote] = useState("");
+  useEffect(() => setSel(new Set()), [site.id, outcome, reason, fp, ip]);
+  const toggle = (id: string) => setSel((cur) => { const n = new Set(cur); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allShown = !!evs && evs.length > 0 && evs.every((e) => sel.has(e.id));
+  const bulk = async (label: string, byFilter: boolean) => {
+    const what = label ? `as ${label}` : "as unlabelled";
+    if (byFilter && !confirm(`Label every event matching this filter (up to 1000) ${what}? This trains the site's model.`)) return;
+    try {
+      const body = byFilter ? { label, filter: { outcome, reason, fp } } : { label, ids: [...sel] };
+      const r = await api<{ labelled: number }>("POST", `/sites/${site.id}/labels`, body);
+      setNote(`Labelled ${r.labelled} event${r.labelled === 1 ? "" : "s"} ${what}.`);
+      setSel(new Set());
+      reload();
+    } catch (x: any) {
+      setNote(x.message);
+    }
+  };
+  const filtered = !!(outcome || reason || fp);
   return (
     <div class="grid">
       <div class="row card">
@@ -281,14 +300,32 @@ function Events({ site, openId }: { site: Site; openId?: string }) {
         {(outcome || reason || fp || ip) && <button onClick={() => { setOutcome(""); setReason(""); setFp(""); setIp(""); }}>Clear</button>}
       </div>
       <Err msg={err} />
+      {(sel.size > 0 || filtered) && (
+        <div class="row card" role="toolbar" aria-label="Label events">
+          {sel.size > 0 && <>
+            <span><b>{sel.size}</b> selected</span>
+            <button class="small" onClick={() => bulk("bot", false)}>Label bot</button>
+            <button class="small" onClick={() => bulk("human", false)}>Label human</button>
+            <button class="small" onClick={() => bulk("", false)}>Clear label</button>
+          </>}
+          {filtered && sel.size === 0 && <>
+            <span class="secondary">All events matching this filter:</span>
+            <button class="small" onClick={() => bulk("bot", true)}>Label bot</button>
+            <button class="small" onClick={() => bulk("human", true)}>Label human</button>
+          </>}
+        </div>
+      )}
+      {note && <div class="notice ok" role="status">{note}</div>}
       <div class="card" style={{ padding: "4px 8px", overflowX: "auto" }}>
         {evs && evs.length === 0 && <div class="empty">No events match.</div>}
         {evs && evs.length > 0 && (
           <table>
-            <thead><tr><th>Time</th><th>Action</th><th>Outcome</th><th class="num">Risk</th><th>Reasons</th><th>Browser</th><th>Network</th><th>Device</th><th>Label</th></tr></thead>
+            <thead><tr><th><input type="checkbox" aria-label="Select all shown events" checked={allShown}
+              onChange={() => setSel(allShown ? new Set() : new Set(evs.map((e) => e.id)))} /></th><th>Time</th><th>Action</th><th>Outcome</th><th class="num">Risk</th><th>Reasons</th><th>Browser</th><th>Network</th><th>Device</th><th>Label</th></tr></thead>
             <tbody>
               {evs.map((e) => (
                 <tr key={e.id} class="click" onClick={() => setOpen(e.id)} tabIndex={0} onKeyDown={(k) => k.key === "Enter" && setOpen(e.id)}>
+                  <td onClick={(ev) => ev.stopPropagation()}><input type="checkbox" aria-label={`Select event ${e.id}`} checked={sel.has(e.id)} onChange={() => toggle(e.id)} /></td>
                   <td class="secondary" style={{ whiteSpace: "nowrap" }}>{new Date(e.ts).toLocaleString()}</td>
                   <td>{e.action}</td>
                   <td><Outcome o={e.outcome} />{e.challenge_kind && <span class="muted"> · {e.challenge_kind}{e.challenge_ok === false ? " failed" : ""}</span>}</td>

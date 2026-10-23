@@ -94,12 +94,15 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 			}
 		})
 		if err != nil || n2.State == nonce.Burned {
+			s.metrics.inc("doorkeep_challenges_total", "kind", "visual", "result", "exhausted")
+			s.share.recordBlock(s.clientIP(r))
 			if ev := s.recordChallengeFailure(ctx, n, site, "visual"); ev != nil {
 				s.Models.Label(site.ID, ev.Features, true, model.WeightWeak)
 			}
 			clientError(w, http.StatusConflict, "challenge-exhausted")
 			return
 		}
+		s.metrics.inc("doorkeep_challenges_total", "kind", "visual", "result", "fail")
 		resp := s.visualResp(ctx, n2)
 		resp.Status = "retry"
 		writeJSON(w, http.StatusOK, resp)
@@ -110,6 +113,7 @@ func (s *Server) handleVisualAnswer(w http.ResponseWriter, r *http.Request, req 
 		clientError(w, http.StatusInternalServerError, "internal-error")
 		return
 	}
+	s.metrics.inc("doorkeep_challenges_total", "kind", "visual", "result", "ok")
 	th := site.ThresholdsFor(n.Action)
 	d := scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
 	d = scoring.ApplyChallengeCredit(d, creditVisual, th, site.Mode)

@@ -20,7 +20,7 @@ func TestLiveData(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	start := time.Now()
-	db, err := Load(dir)
+	db, err := Load(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

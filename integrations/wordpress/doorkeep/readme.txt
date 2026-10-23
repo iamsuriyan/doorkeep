@@ -1,7 +1,7 @@
 === doorkeep ===
 Tags: spam, bot protection, captcha alternative, login security, privacy
 Requires at least: 6.0
-Tested up to: 6.8
+Tested up to: 7.1
 Requires PHP: 8.0
 Stable tag: 0.2.0
 License: Apache-2.0

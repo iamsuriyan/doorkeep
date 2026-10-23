@@ -9,7 +9,9 @@ origin under `/_dk/`), put a placeholder inside the form, and verify the
 | Any backend | `POST /v1/siteverify` (Turnstile-compatible) | end to end |
 | Plain HTML + Go | `examples/static-form` | unit, against a stand-in server |
 | Go | `github.com/iamsuriyan/doorkeep/pkg/verify` | end to end |
-| Node.js | `@doorkeep/verify` (`integrations/node`) | unit |
+| Node.js / Express | `@doorkeep/verify` (`integrations/node`), with `middleware()` for Express and Connect | unit |
+| Python / Django | `doorkeep` (`integrations/python`): client, form mixin, view decorator, template tag | unit on Python 3.9 and 3.13 with Django |
+| Laravel | `doorkeep/laravel` (`integrations/laravel`): validation rule and `doorkeep:` route middleware | unit in CI; checked in a fresh Laravel app |
 | Next.js | `@doorkeep/next` (`integrations/nextjs`), example in `examples/nextjs-signup` | end to end, real Next.js 16 Server Action; edge gate unit-tested |
 | PHP | `doorkeep/verify` (`integrations/php`) | unit on PHP 8.1 and 8.4 in CI, against a live stand-in server |
 | WordPress | plugin in `integrations/wordpress/doorkeep`, stack in `examples/wordpress` | end to end on real WordPress 6 (login, comments) and WooCommerce 10.2 block checkout (opt-in: `DK_WP=1 DK_WC=1 make e2e`); proxy and settings logic unit-tested in CI |

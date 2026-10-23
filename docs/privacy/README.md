@@ -43,7 +43,8 @@ functional `__dk_edge` cookie in edge mode.
 | Operator labels | with the event | bot or human | with the event |
 | Allow/deny lists | database | what the operator entered (IP, CIDR, ASN, country, fingerprint prefix, UA pattern) | until removed or expired |
 | Admin accounts, sessions, API tokens, audit log | database | argon2id password hashes; SHA-256 of session cookies and API tokens; who changed what | accounts until removed; sessions 12 hours; tokens until expiry or revocation |
-| IP intelligence | data directory | public ASN, Tor, Spamhaus DROP and crawler range lists | refreshed weekly |
+| IP intelligence | data directory | public ASN, Tor, Spamhaus DROP, crawler range and blocklist files | refreshed weekly |
+| Shared blocklist (only with `share_blocklist`) | memory | blocked-submission counts per /24 or /48 network | 24 hours; networks over the threshold are published |
 
 Raw IP addresses, user agent strings, WebGL strings, time zone names and
 language lists are never written to disk. The client IP is held in memory

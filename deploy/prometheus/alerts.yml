@@ -1,0 +1,57 @@
+# Prometheus alerting rules for doorkeep. Scrape /metrics on the admin
+# listener (default 127.0.0.1:8081) with job="doorkeep", then load this file:
+#   rule_files: [/etc/prometheus/doorkeep-alerts.yml]
+groups:
+  - name: doorkeep
+    rules:
+      - alert: DoorkeepDown
+        expr: up{job="doorkeep"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "doorkeep {{ $labels.instance }} is down"
+          description: "Forms protected by doorkeep fail closed (or open, if configured) while it is unreachable."
+
+      - alert: DoorkeepServerErrors
+        expr: |
+          sum by (instance) (rate(doorkeep_http_requests_total{job="doorkeep",code=~"5.."}[5m]))
+            / sum by (instance) (rate(doorkeep_http_requests_total{job="doorkeep"}[5m])) > 0.02
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "doorkeep {{ $labels.instance }}: over 2% of requests fail"
+          description: "Check the log for store or internal errors (doorkeep_internal_errors_total)."
+
+      - alert: DoorkeepSlowScoring
+        expr: |
+          histogram_quantile(0.95, sum by (instance, le) (rate(doorkeep_http_request_duration_seconds_bucket{job="doorkeep",route="POST /v1/submit"}[10m]))) > 0.25
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "doorkeep {{ $labels.instance }}: submit p95 above 250 ms"
+
+      - alert: DoorkeepIPDataStale
+        expr: time() - doorkeep_ipdata_updated_time_seconds{job="doorkeep"} > 14 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "doorkeep {{ $labels.instance }}: IP intelligence not updated for 14 days"
+          description: "Network and blocklist signals go stale. Run `doorkeep ipdata update` and check outbound access."
+
+      - alert: DoorkeepRedisFailing
+        expr: increase(doorkeep_redis_errors_total{job="doorkeep"}[10m]) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "doorkeep {{ $labels.instance }}: Redis errors, velocity counts are per node"
+
+      - alert: DoorkeepBlockSurge
+        # Either an attack or a rule change blocking real people: look at the
+        # dashboard's top reasons before reacting.
+        expr: |
+          sum by (site) (rate(doorkeep_submits_total{job="doorkeep",outcome="block"}[15m]))
+            / sum by (site) (rate(doorkeep_submits_total{job="doorkeep"}[15m])) > 0.5
+          and sum by (site) (rate(doorkeep_submits_total{job="doorkeep"}[15m])) > 0.05
+        for: 15m
+        labels: { severity: info }
+        annotations:
+          summary: "doorkeep site {{ $labels.site }}: more than half of submits blocked"

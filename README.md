@@ -113,11 +113,12 @@ Known gaps are tracked in the open in
 
 ### Integrations
 
-Go, Node.js, Next.js, PHP and WordPress clients, plus edge mode for nginx,
+Go, Node.js (with Express middleware), Next.js, Python and Django, PHP,
+Laravel and WordPress clients, plus edge mode for nginx,
 Caddy and Traefik (protect whole paths with the proxy's built-in auth
 sub-request; no modules), and `dk-ja4`, a small TLS front that adds JA4 and
-HTTP/2 fingerprints behind any proxy. Next.js, WordPress, nginx, Caddy and
-Traefik are tested end to end with real browsers. See
+HTTP/2 fingerprints behind any proxy. Next.js, WordPress (7.1, with WooCommerce),
+nginx, Caddy and Traefik are tested end to end with real browsers. See
 [docs/integrations](docs/integrations) and the
 [examples](examples): a plain HTML form, Next.js, a WordPress stack and
 Forgejo behind nginx.
@@ -137,6 +138,15 @@ How a decision is made is in [docs/concepts](docs/concepts/README.md), what
 is collected and kept in [docs/privacy](docs/privacy/README.md). The design
 is in [docs/design/v1.md](docs/design/v1.md). The research that motivated the
 project is in [docs/research](docs/research).
+
+### Operating it
+
+Prometheus metrics and tested alert rules
+([monitoring](docs/operations/monitoring.md)), `doorkeep backup` / `restore`
+([backups](docs/operations/backups.md)), FireHOL and CrowdSec IP blocklists
+with opt-in sharing between installs
+([blocklists](docs/operations/blocklists.md)), and signed releases with SBOMs
+([verifying releases](docs/operations/releases.md)).
 
 ## Development
 

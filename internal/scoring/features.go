@@ -405,6 +405,7 @@ func init() {
 	reg(Def{Group: GroupNet, Name: "asn_class", Kind: KindCat, Values: []string{"hosting", "isp", "mobile", "edu", "gov", "unknown"}, Desc: "ASN class from ipdata", Model: true})
 	reg(Def{Group: GroupNet, Name: "ip_tor", Kind: KindBool, Desc: "Source IP is a Tor exit", Model: true})
 	reg(Def{Group: GroupNet, Name: "ip_drop", Kind: KindBool, Desc: "Source IP in Spamhaus DROP/EDROP", Model: true})
+	reg(Def{Group: GroupNet, Name: "ip_blocklist", Kind: KindBool, Desc: "Address is on a configured IP reputation list (FireHOL level 1 by default)", Model: false})
 	reg(Def{Group: GroupNet, Name: "ip_known_crawler", Kind: KindBool, Desc: "Source IP belongs to a verified crawler publisher", Model: true})
 	reg(Def{Group: GroupNet, Name: "ip_country", Kind: KindCat, Desc: "Country of the source IP (lowercase ISO alpha-2)", Model: true})
 	reg(Def{Group: GroupNet, Name: "tz_ip_country_match", Kind: KindBucket, Max: 2, Buckets: []string{"mismatch", "match", "unknown"}, Desc: "Timezone country vs IP country", Model: true})

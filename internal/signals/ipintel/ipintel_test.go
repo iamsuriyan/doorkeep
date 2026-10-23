@@ -30,7 +30,7 @@ func writeFixture(t *testing.T) string {
 }
 
 func TestLookup(t *testing.T) {
-	db, err := Load(writeFixture(t))
+	db, err := Load(writeFixture(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestLookup(t *testing.T) {
 }
 
 func TestEmptyDirIsUsable(t *testing.T) {
-	db, err := Load(t.TempDir())
+	db, err := Load(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

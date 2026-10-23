@@ -1,0 +1,12 @@
+{
+  "name": "patchright / Nodriver: fields filled with one stray key event, exact-centre near-zero clicks",
+  "source": "testing/e2e/tests/advanced.spec.ts measurement 2026-10-23 (both were allowed after proof of work at risk 40)",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 17, "beh.ptr_samples": 13, "beh.click_count": 3, "beh.click_dur_mean": 1.6,
+            "beh.click_center_frac": 1, "beh.key_count": 1, "beh.key_hold_mean": 0, "beh.input_no_key_frac": 1, "beh.untrusted_frac": 0, "t.elapsed_s": 6},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "linux", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "challenge", "min_risk": 70, "fires": ["PROGRAMMATIC_FILL_AND_CLICK", "ZERO_PRESS_DURATION", "CLICK_EXACT_CENTER"],
+             "note": "Risk 70: proof of work alone (credit 20) cannot clear it, so the visual challenge is required."}
+}

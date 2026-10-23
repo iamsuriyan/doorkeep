@@ -43,6 +43,7 @@ func (s *Server) adminRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /admin/v1/sites/{site}/events/{event}", a(s.adminGetEvent))
 	m.HandleFunc("DELETE /admin/v1/sites/{site}/events/{event}", a(s.adminDeleteEvent))
 	m.HandleFunc("POST /admin/v1/sites/{site}/events/{event}/label", a(s.adminLabelEvent))
+	m.HandleFunc("POST /admin/v1/sites/{site}/labels", a(s.adminBulkLabel))
 	m.HandleFunc("GET /admin/v1/sites/{site}/stats", a(s.adminStats))
 	m.HandleFunc("GET /admin/v1/sites/{site}/rules", a(s.adminListRules))
 	m.HandleFunc("PUT /admin/v1/sites/{site}/rules/{rule}", a(s.adminPutRule))
@@ -60,6 +61,13 @@ func (s *Server) adminRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /admin/v1/tokens", a(s.adminListTokens))
 	m.HandleFunc("POST /admin/v1/tokens", a(s.adminCreateToken))
 	m.HandleFunc("DELETE /admin/v1/tokens/{id}", a(s.adminRevokeToken))
+	// Metrics: open on the private admin listener (for a local Prometheus);
+	// behind an admin token when the admin routes are on the public one.
+	if s.Cfg.AdminListen == "" {
+		m.HandleFunc("GET /metrics", a(s.handleMetrics))
+	} else {
+		m.HandleFunc("GET /metrics", s.handleMetrics)
+	}
 }
 
 // problem writes an RFC 9457 problem+json error.
@@ -450,6 +458,85 @@ func (s *Server) adminLabelEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"label": in.Label})
 }
 
+// maxBulkLabel bounds one bulk-label call.
+const maxBulkLabel = 1000
+
+// adminBulkLabel labels many events at once: either explicit ids, or every
+// event matching a filter (the same filters as the events list). Each label
+// trains the site's supervised model like a single label does.
+func (s *Server) adminBulkLabel(w http.ResponseWriter, r *http.Request) {
+	site := s.site(w, r)
+	if site == nil {
+		return
+	}
+	var in struct {
+		Label  string   `json:"label"`
+		IDs    []string `json:"ids"`
+		Filter *struct {
+			Outcome string `json:"outcome"`
+			Reason  string `json:"reason"`
+			FP      string `json:"fp"`
+			Range   string `json:"range"`
+		} `json:"filter"`
+	}
+	if err := decodeJSON(r, &in, 128<<10); err != nil || (in.Label != "bot" && in.Label != "human" && in.Label != "") ||
+		(len(in.IDs) == 0) == (in.Filter == nil) || len(in.IDs) > maxBulkLabel {
+		problem(w, http.StatusBadRequest, "bad-request", fmt.Sprintf("label (bot, human or empty) and either ids (at most %d) or filter are required", maxBulkLabel))
+		return
+	}
+	n := 0
+	apply := func(e *store.Event) error {
+		if e.SiteID != site.ID {
+			return nil // ids from another site are ignored, never labelled
+		}
+		if err := s.Store.LabelEvent(r.Context(), e.ID, in.Label, "dashboard"); err != nil {
+			return err
+		}
+		if in.Label != "" {
+			s.Models.Label(site.ID, e.Features, in.Label == "bot", model.WeightStrong)
+		}
+		n++
+		return nil
+	}
+	var err error
+	if in.Filter != nil {
+		f := store.EventFilter{SiteID: site.ID, Outcome: scoring.Outcome(in.Filter.Outcome), Reason: in.Filter.Reason, FPHash: in.Filter.FP}
+		if d, perr := time.ParseDuration(in.Filter.Range); perr == nil {
+			f.Since = s.Now().Add(-d)
+		}
+		errStop := errors.New("limit")
+		err = s.Store.StreamEvents(r.Context(), f, func(e *store.Event) error {
+			if n >= maxBulkLabel {
+				return errStop
+			}
+			return apply(e)
+		})
+		if errors.Is(err, errStop) {
+			err = nil
+		}
+	} else {
+		for _, id := range in.IDs {
+			e, gerr := s.Store.GetEvent(r.Context(), id)
+			if errors.Is(gerr, store.ErrNotFound) {
+				continue
+			}
+			if gerr != nil {
+				err = gerr
+				break
+			}
+			if err = apply(e); err != nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r, "event.label_bulk", site.ID, map[string]any{"label": in.Label, "count": n, "by_filter": in.Filter != nil})
+	writeJSON(w, http.StatusOK, map[string]int{"labelled": n})
+}
+
 // ---------------- lists ----------------
 
 func (s *Server) adminListLists(w http.ResponseWriter, r *http.Request) {
@@ -599,7 +686,7 @@ type Privacy struct {
 func PrivacyReport(cfg *config.Config) Privacy {
 	days := int(cfg.EventRetention.Hours() / 24)
 	ev := fmt.Sprintf("%d d", days)
-	return Privacy{
+	p := Privacy{
 		EventRetentionDays: days,
 		DataMap: []DataMapItem{
 			{"IP address", "day-keyed HMAC of the /24 or /48; ASN; country", "abuse velocity, network reputation", "events " + ev + "; velocity counters (keyed hashes) 1 h", "personal data; legitimate interest, Art. 6(1)(f), Recital 49", "personal data processed for the purpose in the site's notice; self-hosting keeps it in-country"},
@@ -616,6 +703,12 @@ func PrivacyReport(cfg *config.Config) Privacy {
 			"ip":          "HMAC of the /24 (IPv4) or /48 (IPv6) per day; raw IPs are never written to disk, and velocity counters key on hashes held for at most an hour",
 		},
 	}
+	if cfg.ShareBlocklist {
+		p.DataMap = append(p.DataMap, DataMapItem{"Shared blocklist (opt-in)", "in memory only: blocked-submission counts per /24 or /48 network",
+			"published at /v1/share/blocklist for other installs", "24 h; networks blocked " + strconv.Itoa(cfg.ShareMinBlocks) + "+ times are published",
+			"network prefixes of abusive traffic; legitimate interest in network security (Recital 49); mention it in your notice", "as GDPR"})
+	}
+	return p
 }
 
 func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {

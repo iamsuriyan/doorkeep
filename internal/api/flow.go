@@ -81,6 +81,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	kIP, k24 := "sess-ip:"+s.Keys.VelKey(ip.String()), "sess-24:"+s.Keys.VelKey(pseudo.Prefix(ip))
 	c := s.Vel.Batch([]velocity.Op{{Key: kIP}, {Key: k24}}, []velocity.Query{{Key: kIP, Dur: time.Minute}, {Key: k24, Dur: time.Minute}})
 	if c[0] > sessionPerIPPerMin || c[1] > sessionPer24PerMin {
+		s.metrics.inc("doorkeep_rate_limited_total")
 		w.Header().Set("Retry-After", "30")
 		clientError(w, http.StatusTooManyRequests, "rate-limited")
 		return
@@ -204,6 +205,11 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.Store.InsertEvent(ctx, ev); err != nil {
 		s.Log.Error("event insert", "err", err)
+		s.metrics.inc("doorkeep_internal_errors_total", "op", "event_insert")
+	}
+	s.metrics.inc("doorkeep_submits_total", "site", site.ID, "outcome", string(d.Outcome))
+	if d.WouldBe == scoring.Block && listAction == "" {
+		s.share.recordBlock(ip)
 	}
 
 	if d.Outcome == scoring.Challenge {
@@ -247,9 +253,11 @@ func (s *Server) mintAndRespond(w http.ResponseWriter, r *http.Request, site *st
 	}, site.SiteKey, ttl)
 	if err != nil {
 		s.Log.Error("mint", "err", err)
+		s.metrics.inc("doorkeep_internal_errors_total", "op", "mint")
 		clientError(w, http.StatusInternalServerError, "internal-error")
 		return
 	}
+	s.metrics.inc("doorkeep_tokens_total", "site", site.ID, "outcome", string(d.Outcome), "challenge", ch)
 	writeJSON(w, http.StatusOK, submitResp{Status: "ok", Token: tok})
 }
 
@@ -297,6 +305,10 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 		if n2.State == nonce.Burned {
 			s.recordChallengeFailure(ctx, n2, site, "pow")
+			s.share.recordBlock(s.clientIP(r))
+			s.metrics.inc("doorkeep_challenges_total", "kind", "pow", "result", "exhausted")
+		} else {
+			s.metrics.inc("doorkeep_challenges_total", "kind", "pow", "result", "fail")
 		}
 		clientError(w, http.StatusBadRequest, "challenge-failed")
 		return
@@ -306,6 +318,7 @@ func (s *Server) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		clientError(w, http.StatusInternalServerError, "internal-error")
 		return
 	}
+	s.metrics.inc("doorkeep_challenges_total", "kind", "pow", "result", "ok")
 	th := site.ThresholdsFor(n.Action)
 	d := scoring.Decision{Risk: n.Risk, Floor: n.Floor, Reasons: ev.Reasons, Outcome: scoring.Challenge}
 	d = scoring.ApplyChallengeCredit(d, creditPoW, th, scoring.ModeEnforce)
@@ -351,6 +364,7 @@ func applyIPInfo(f scoring.Features, info ipintel.Info, tzCountry string) {
 	f.SetCat("net.asn_class", info.Class)
 	f.SetBool("net.ip_tor", info.Tor)
 	f.SetBool("net.ip_drop", info.Drop)
+	f.SetBool("net.ip_blocklist", info.Blocklist != "")
 	f.SetBool("net.ip_known_crawler", info.Crawler != "")
 	if info.Country != "" {
 		f.SetCat("net.ip_country", info.Country)

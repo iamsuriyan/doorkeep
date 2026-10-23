@@ -34,3 +34,6 @@ examples/nextjs-signup/next-env.d.ts
 integrations/*/dist/
 testing/wordpress/.wc
 .pw-browsers/
+integrations/python/uv.lock
+integrations/python/dist/
+**/__pycache__/

@@ -45,6 +45,8 @@ type Server struct {
 	Models   *model.Registry
 	rc       ruleCache
 	rates    siteRates
+	metrics  *metrics
+	share    *shareTracker
 	Log      *slog.Logger
 	Now      func() time.Time
 	mux      *http.ServeMux
@@ -63,6 +65,8 @@ func New(cfg *config.Config, st store.Store, rs *rules.Set, log *slog.Logger) *S
 	s.Visual = visual.New(cfg.SecretBytes())
 	s.Models = model.NewRegistry(func() time.Time { return s.Now() })
 	s.rc.sets = map[string]*rules.Set{}
+	s.metrics = newMetrics()
+	s.share = newShareTracker(func() time.Time { return s.Now() })
 	s.routes()
 	return s
 }
@@ -85,6 +89,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/report", s.handleReport)
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
 	m.HandleFunc("GET /readyz", s.handleReady)
+	m.HandleFunc("GET /v1/share/blocklist", s.handleShareBlocklist)
 	// With admin_listen set, the dashboard and admin API are served only by
 	// AdminHandler on that address, never on the public listener (which
 	// sites proxy under /_dk/ on their own domains).
@@ -121,7 +126,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, mux *http.ServeMu
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
-	mux.ServeHTTP(w, r)
+	sw := &statusWriter{ResponseWriter: w}
+	start := time.Now()
+	mux.ServeHTTP(sw, r)
+	if sw.code == 0 {
+		sw.code = http.StatusOK
+	}
+	// ServeMux records the matched pattern on the request it dispatched.
+	s.metrics.observe(r.Pattern, sw.code, time.Since(start))
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

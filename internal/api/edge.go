@@ -74,6 +74,7 @@ func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	info := s.IP.Get().Lookup(ip)
 	if info.Crawler != "" {
+		s.metrics.inc("doorkeep_edge_decisions_total", "result", "pass")
 		w.Header().Set("X-Doorkeep-Reasons", "VERIFIED_CRAWLER_"+strings.ToUpper(info.Crawler))
 		w.Header().Set("X-Doorkeep-Risk", "0")
 		w.WriteHeader(http.StatusOK)
@@ -83,11 +84,13 @@ func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
 	act, code := s.matchLists(r.Context(), site.ID, ip, info, "", r.UserAgent(), now)
 	switch act {
 	case scoring.ListAllow:
+		s.metrics.inc("doorkeep_edge_decisions_total", "result", "pass")
 		w.Header().Set("X-Doorkeep-Reasons", code)
 		w.Header().Set("X-Doorkeep-Risk", "0")
 		w.WriteHeader(http.StatusOK)
 		return
 	case scoring.ListDeny:
+		s.metrics.inc("doorkeep_edge_decisions_total", "result", "deny")
 		http.Error(w, "denied", http.StatusForbidden)
 		return
 	}
@@ -99,12 +102,14 @@ func (s *Server) handleEdgeAuth(w http.ResponseWriter, r *http.Request) {
 			cl.Outcome == string(scoring.Allow) && cl.UA == uaFamilyOf(r.UserAgent()) &&
 			(act != scoring.ListAlwaysChallenge || (cl.Challenge != "" && cl.Challenge != "none")) &&
 			(!site.StrictIP || s.Keys.IPHashMatches(ip, cl.IP24, time.Unix(cl.IssuedAt, 0), now)) {
+			s.metrics.inc("doorkeep_edge_decisions_total", "result", "pass")
 			w.Header().Set("X-Doorkeep-Risk", strconv.Itoa(cl.Risk))
 			w.Header().Set("X-Doorkeep-Reasons", strings.Join(cl.Reasons, ","))
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 	}
+	s.metrics.inc("doorkeep_edge_decisions_total", "result", "check")
 	// Caddy's forward_auth copies a 3xx Location; nginx maps 401 to a
 	// redirect itself (error_page). Browsers get redirected, API clients 401.
 	if r.Header.Get("X-Doorkeep-Mode") == "redirect" && strings.Contains(r.Header.Get("Accept"), "text/html") {

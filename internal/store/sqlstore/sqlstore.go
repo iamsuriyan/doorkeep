@@ -100,6 +100,19 @@ func Open(path string) (*DB, error) {
 	return db, nil
 }
 
+// IsPostgres reports whether the store is Postgres (cluster mode).
+func (db *DB) IsPostgres() bool { return db.dialect == Postgres }
+
+// Snapshot writes a consistent copy of a SQLite database to path (which
+// must not exist), safe while doorkeep is serving.
+func (db *DB) Snapshot(ctx context.Context, path string) error {
+	if db.dialect != SQLite {
+		return errors.New("sqlstore: snapshots are for SQLite; back up Postgres with pg_dump")
+	}
+	_, err := db.w.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
+}
+
 // OpenMemory opens a shared in-memory database for tests.
 func OpenMemory(name string) (*DB, error) {
 	dsn := "file:" + name + "?mode=memory&cache=shared&_pragma=busy_timeout(5000)&_txlock=immediate"

@@ -19,6 +19,9 @@ doorkeep reads an optional YAML file (`--config` or `DOORKEEP_CONFIG`) and
 | `database_url` | `DOORKEEP_DATABASE_URL` | | Postgres for cluster mode; requires explicit secrets |
 | `redis_url` | `DOORKEEP_REDIS_URL` | | Redis for shared velocity in cluster mode |
 | `log_level` | `DOORKEEP_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `ipdata_blocklists` | `DOORKEEP_IPDATA_BLOCKLISTS` (`name=url,...` or `none`) | FireHOL level 1 | Plain-text IP reputation lists; see [blocklists](../operations/blocklists.md) |
+| `share_blocklist` | `DOORKEEP_SHARE_BLOCKLIST` | `false` | Publish repeatedly blocked networks at `/v1/share/blocklist` |
+| `share_min_blocks` | | `10` | Blocks in 24 hours before a network is published (minimum 3) |
 
 Per-site settings (origins, mode, thresholds, per-action thresholds,
 interactive actions, strict IP binding, accessibility link, rule overrides,
@@ -36,6 +39,8 @@ doorkeep admin token --name NAME [--ttl 90d]  # bearer token for /admin/v1 (expi
 doorkeep admin token list                # id, name, created, expires, last used
 doorkeep admin token revoke ID           # revoke immediately
 doorkeep ipdata update
+doorkeep backup --out FILE.tar.gz         # snapshot and secrets, safe while serving
+doorkeep restore --in FILE.tar.gz [--force]
 doorkeep migrate
 doorkeep version
 ```

@@ -1,0 +1,12 @@
+{
+  "name": "Natural-looking synthesised pointer path with scripted (near-zero, exact-centre) clicks",
+  "source": "testing/e2e/tests/advanced.spec.ts, Nodriver run where HUMAN_POINTER_EVIDENCE lowered risk to the edge of the challenge band",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 60, "beh.ptr_samples": 45, "beh.ptr_straightness": 0.7, "beh.ptr_interval_cv": 0.6,
+            "beh.untrusted_frac": 0, "beh.click_count": 3, "beh.click_dur_mean": 1.5, "beh.click_center_frac": 1, "beh.input_no_key_frac": 1,
+            "beh.key_count": 20, "beh.key_hold_cv": 0.3, "beh.key_interval_cv": 0.5, "t.elapsed_s": 8},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "linux", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "challenge", "min_risk": 70, "not_fires": ["HUMAN_POINTER_EVIDENCE", "HUMAN_TYPING_EVIDENCE"]}
+}

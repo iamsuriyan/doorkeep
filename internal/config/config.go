@@ -9,12 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/iamsuriyan/doorkeep/internal/signals/ipintel"
 )
 
 // Config is the runtime configuration.
@@ -39,6 +42,14 @@ type Config struct {
 	// IPDataAutoUpdate downloads IP intelligence weekly. Disable for
 	// air-gapped installs and run `doorkeep ipdata update` yourself.
 	IPDataAutoUpdate bool `yaml:"ipdata_auto_update"`
+	// IPDataBlocklists are plain-text IP reputation lists (FireHOL,
+	// CrowdSec, another doorkeep's shared feed). Default: FireHOL level 1.
+	// Env DOORKEEP_IPDATA_BLOCKLISTS: "name=url,name=url", or "none".
+	IPDataBlocklists []ipintel.Blocklist `yaml:"ipdata_blocklists"`
+	// ShareBlocklist publishes networks this instance blocked at least
+	// ShareMinBlocks times in 24 hours at /v1/share/blocklist (opt-in).
+	ShareBlocklist bool `yaml:"share_blocklist"`
+	ShareMinBlocks int  `yaml:"share_min_blocks"`
 	// TLS: terminate TLS in doorkeep so JA4 and HTTP/2 fingerprints are
 	// available. Either cert/key files or ACME domains (TLS-ALPN-01, port 443).
 	TLSCert         string   `yaml:"tls_cert"`
@@ -71,6 +82,8 @@ func Defaults() Config {
 		EventRetention:   30 * 24 * time.Hour,
 		LogLevel:         "info",
 		IPDataAutoUpdate: true,
+		IPDataBlocklists: ipintel.DefaultBlocklists,
+		ShareMinBlocks:   10,
 	}
 }
 
@@ -108,6 +121,18 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("DOORKEEP_IPDATA_AUTO_UPDATE"); v != "" {
 		c.IPDataAutoUpdate = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("DOORKEEP_IPDATA_BLOCKLISTS"); v != "" {
+		c.IPDataBlocklists = nil
+		if v != "none" {
+			for _, item := range strings.Split(v, ",") {
+				name, u, _ := strings.Cut(strings.TrimSpace(item), "=")
+				c.IPDataBlocklists = append(c.IPDataBlocklists, ipintel.Blocklist{Name: name, URL: u})
+			}
+		}
+	}
+	if v := os.Getenv("DOORKEEP_SHARE_BLOCKLIST"); v != "" {
+		c.ShareBlocklist = v == "1" || strings.EqualFold(v, "true")
 	}
 	if v := os.Getenv("DOORKEEP_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = strings.Split(v, ",")
@@ -183,6 +208,17 @@ func (c *Config) validate() error {
 	if c.AdminListen != "" && c.AdminListen == c.Listen {
 		return errors.New("config: admin_listen must differ from listen")
 	}
+	seen := map[string]bool{}
+	for _, l := range c.IPDataBlocklists {
+		u, err := url.Parse(l.URL)
+		if !ipintel.ValidBlocklistName(l.Name) || seen[l.Name] || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("config: blocklist %q needs a unique name (a-z, 0-9, _ or -) and an http(s) URL", l.Name)
+		}
+		seen[l.Name] = true
+	}
+	if c.ShareMinBlocks < 3 {
+		return errors.New("config: share_min_blocks must be at least 3")
+	}
 	if c.TokenTTL <= 0 || c.TokenTTL > time.Hour {
 		return errors.New("config: token_ttl must be in (0, 1h]")
 	}
@@ -207,6 +243,15 @@ func (c *Config) SecretBytes() []byte { b, _ := decodeKey(c.Secret); return b }
 
 // KeyBytes decodes a token key.
 func KeyBytes(k TokenKey) []byte { b, _ := decodeKey(k.Key); return b }
+
+// BlocklistNames returns the configured blocklist names.
+func (c *Config) BlocklistNames() []string {
+	out := make([]string, 0, len(c.IPDataBlocklists))
+	for _, l := range c.IPDataBlocklists {
+		out = append(out, l.Name)
+	}
+	return out
+}
 
 // Trusted reports whether addr is a trusted proxy.
 func (c *Config) Trusted(addr netip.Addr) bool {

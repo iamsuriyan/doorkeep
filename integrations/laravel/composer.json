@@ -1,0 +1,14 @@
+{
+  "name": "doorkeep/laravel",
+  "description": "doorkeep for Laravel: validation rule and route middleware",
+  "type": "library",
+  "license": "Apache-2.0",
+  "require": {
+    "php": ">=8.1",
+    "doorkeep/verify": "^0.1",
+    "illuminate/support": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+    "illuminate/contracts": "^10.0 || ^11.0 || ^12.0 || ^13.0"
+  },
+  "autoload": { "psr-4": { "Doorkeep\\Laravel\\": "src/" } },
+  "extra": { "laravel": { "providers": ["Doorkeep\\Laravel\\DoorkeepServiceProvider"] } }
+}

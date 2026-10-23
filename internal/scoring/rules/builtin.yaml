@@ -171,12 +171,19 @@
   weight: 20
   description: Every click landed within one pixel of the element's exact centre
 
+# Human-evidence rules (below) also do not apply when the clicks themselves
+# are scripted (near-zero press): a natural-looking pointer path next to a
+# 2 ms click is synthesised input, not a person.
 # Press duration: a physical mouse button or touch press lasts tens of
 # milliseconds or more. Scripted clicks are near zero, but on a loaded
 # machine the gap between their down and up events stretches to a few
 # milliseconds, so the cut-off is 20 ms rather than "exactly zero".
+# Fields changed without key presses happen for people too (autofill,
+# password managers), so this needs the near-zero press as well. It does not
+# require zero key events: one stray key event used to defeat it (patchright
+# and Nodriver both emit one).
 - id: PROGRAMMATIC_FILL_AND_CLICK
-  when: "beh.input_no_key_frac >= 0.9 && beh.key_count < 1 && beh.click_count >= 1 && beh.click_dur_mean < 20"
+  when: "beh.input_no_key_frac >= 0.9 && beh.click_count >= 1 && beh.click_dur_mean < 20"
   weight: 30
   description: Fields filled without any key presses and a near-zero press (scripted form fill)
 
@@ -213,13 +220,13 @@
 
 - id: HUMAN_POINTER_EVIDENCE
   when: "beh.ptr_samples > 30 && beh.ptr_straightness < 0.9 && beh.ptr_interval_cv > 0.2 && beh.untrusted_frac < 0.05"
-  unless: "fp.font_os_mismatch == 1 || fp.gpu_os_mismatch == 1 || fp.uad_mismatch == 1 || fp.feat_mismatch >= 2 || net.ua_hdr_js_mismatch == 1 || net.ch_mismatch == 1 || net.tls_ua_mismatch == 1 || net.h2_ua_mismatch == 1 || auto.wd_tamper == 1"
+  unless: "fp.font_os_mismatch == 1 || fp.gpu_os_mismatch == 1 || fp.uad_mismatch == 1 || fp.feat_mismatch >= 2 || net.ua_hdr_js_mismatch == 1 || net.ch_mismatch == 1 || net.tls_ua_mismatch == 1 || net.h2_ua_mismatch == 1 || auto.wd_tamper == 1 || (beh.click_count >= 1 && beh.click_dur_mean < 20)"
   weight: -15
   description: Natural, trusted pointer movement observed
 
 - id: HUMAN_TYPING_EVIDENCE
   when: "beh.key_count >= 8 && beh.key_hold_cv > 0.15 && beh.key_interval_cv > 0.2 && beh.untrusted_frac < 0.05"
-  unless: "fp.font_os_mismatch == 1 || fp.gpu_os_mismatch == 1 || fp.uad_mismatch == 1 || fp.feat_mismatch >= 2 || net.ua_hdr_js_mismatch == 1 || net.ch_mismatch == 1 || net.tls_ua_mismatch == 1 || net.h2_ua_mismatch == 1 || auto.wd_tamper == 1"
+  unless: "fp.font_os_mismatch == 1 || fp.gpu_os_mismatch == 1 || fp.uad_mismatch == 1 || fp.feat_mismatch >= 2 || net.ua_hdr_js_mismatch == 1 || net.ch_mismatch == 1 || net.tls_ua_mismatch == 1 || net.h2_ua_mismatch == 1 || auto.wd_tamper == 1 || (beh.click_count >= 1 && beh.click_dur_mean < 20)"
   weight: -10
   description: Natural, trusted keyboard rhythm observed
 
@@ -334,6 +341,14 @@
   weight: 70
   floor: true
   description: Request from a network on the Spamhaus DROP list
+
+- id: IP_BLOCKLIST
+  when: "net.ip_blocklist == 1"
+  # Evidence, not proof: public lists can include shared addresses (VPN
+  # exits, carrier NAT). With nothing else wrong it leads to a challenge at
+  # most.
+  weight: 25
+  description: Address is on a configured IP reputation list (FireHOL level 1 by default)
 
 - id: TIMEZONE_IP_COUNTRY_MISMATCH
   when: "net.tz_ip_country_match == 0"

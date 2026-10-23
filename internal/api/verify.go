@@ -63,6 +63,11 @@ func readParams(r *http.Request) (url.Values, error) {
 	return url.ParseQuery(string(body))
 }
 
+func (s *Server) verifyFail(w http.ResponseWriter, code string) {
+	s.metrics.inc("doorkeep_verifications_total", "result", "invalid")
+	verifyFail(w, code)
+}
+
 func verifyFail(w http.ResponseWriter, code string) {
 	writeJSON(w, http.StatusOK, verifyResp{Success: false, ErrorCodes: []string{code}})
 }
@@ -70,45 +75,45 @@ func verifyFail(w http.ResponseWriter, code string) {
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	v, err := readParams(r)
 	if err != nil {
-		verifyFail(w, "bad-request")
+		s.verifyFail(w, "bad-request")
 		return
 	}
 	secret, resp := v.Get("secret"), v.Get("response")
 	switch {
 	case secret == "":
-		verifyFail(w, "missing-input-secret")
+		s.verifyFail(w, "missing-input-secret")
 		return
 	case resp == "":
-		verifyFail(w, "missing-input-response")
+		s.verifyFail(w, "missing-input-response")
 		return
 	}
 	ctx := r.Context()
 	site, err := s.Store.SiteBySecretHash(ctx, pseudo.SecretHash(secret))
 	if err != nil {
-		verifyFail(w, "invalid-input-secret")
+		s.verifyFail(w, "invalid-input-secret")
 		return
 	}
 	c, err := s.Ring.Open(resp, site.SiteKey)
 	switch {
 	case errors.Is(err, token.ErrExpired):
-		verifyFail(w, "timeout-or-duplicate")
+		s.verifyFail(w, "timeout-or-duplicate")
 		return
 	case err != nil || c.SiteID != site.ID:
-		verifyFail(w, "invalid-input-response")
+		s.verifyFail(w, "invalid-input-response")
 		return
 	}
 	now := s.Now()
 	if site.StrictIP {
 		if ipStr := v.Get("remoteip"); ipStr != "" {
 			if a, err := netip.ParseAddr(ipStr); err == nil && !s.tokenIPMatches(a, c, now) {
-				verifyFail(w, "invalid-input-response")
+				s.verifyFail(w, "invalid-input-response")
 				return
 			}
 		}
 	}
 	// Single use: the token is not a bearer credential on its own.
 	if _, err := s.Store.Transition(ctx, c.NonceID, []nonce.State{nonce.Minted}, nonce.Verified, now, nil); err != nil {
-		verifyFail(w, "timeout-or-duplicate")
+		s.verifyFail(w, "timeout-or-duplicate")
 		return
 	}
 	_ = s.Store.MarkEventVerified(ctx, c.EventID, now)
@@ -133,6 +138,11 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		out.Success = false
 		out.ErrorCodes = append(out.ErrorCodes, "action-mismatch")
 	}
+	result := "failure"
+	if out.Success {
+		result = "success"
+	}
+	s.metrics.inc("doorkeep_verifications_total", "result", result)
 	writeJSON(w, http.StatusOK, out)
 }
 

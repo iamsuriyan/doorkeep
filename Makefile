@@ -1,7 +1,7 @@
 GO ?= go
 BIN := bin/doorkeep
 
-.PHONY: build dev test e2e lint fuzz snippet dashboard docs
+.PHONY: build dev test e2e lint fuzz snippet dashboard docs wp-plugin
 
 build: snippet dashboard
 	$(GO) build -o $(BIN) ./cmd/doorkeep
@@ -35,3 +35,10 @@ snippet:
 
 dashboard:
 	pnpm --filter @doorkeep/dashboard build
+
+# Installable WordPress plugin zip (Plugins > Add New > Upload, or WordPress.org).
+wp-plugin:
+	mkdir -p dist
+	rm -f dist/doorkeep-wordpress.zip
+	cd integrations/wordpress && zip -qr ../../dist/doorkeep-wordpress.zip doorkeep -x '*.DS_Store'
+	@echo dist/doorkeep-wordpress.zip

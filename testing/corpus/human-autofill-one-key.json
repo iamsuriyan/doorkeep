@@ -1,0 +1,11 @@
+{
+  "name": "Person using browser autofill who pressed one key",
+  "source": "Fairness guard for PROGRAMMATIC_FILL_AND_CLICK without the zero-key condition",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 40, "beh.ptr_samples": 35, "beh.ptr_straightness": 0.7, "beh.ptr_interval_cv": 0.6,
+            "beh.click_count": 2, "beh.click_dur_mean": 70, "beh.click_center_frac": 0, "beh.key_count": 1, "beh.input_no_key_frac": 1, "beh.untrusted_frac": 0, "t.elapsed_s": 5},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 0, "not_fires": ["PROGRAMMATIC_FILL_AND_CLICK", "ZERO_PRESS_DURATION"]}
+}

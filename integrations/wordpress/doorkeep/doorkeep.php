@@ -144,29 +144,29 @@ final class Doorkeep_Plugin
                 <?php settings_fields('doorkeep'); ?>
                 <table class="form-table" role="presentation">
                     <tr><th scope="row"><label for="dk-public">doorkeep URL (browser)</label></th>
-                        <td><input id="dk-public" class="regular-text" name="<?php echo self::OPT; ?>[public_url]" value="<?php echo esc_attr($o['public_url']); ?>" placeholder="https://dk.example.com or <?php echo esc_attr(home_url('/_dk')); ?>">
+                        <td><input id="dk-public" class="regular-text" name="<?php echo esc_attr(self::OPT); ?>[public_url]" value="<?php echo esc_attr($o['public_url']); ?>" placeholder="https://dk.example.com or <?php echo esc_attr(home_url('/_dk')); ?>">
                         <p class="description">Where browsers load the snippet. Same-origin <code>/_dk</code> via your web server is best.</p></td></tr>
                     <tr><th scope="row"><label for="dk-verify">doorkeep URL (server)</label></th>
-                        <td><input id="dk-verify" class="regular-text" name="<?php echo self::OPT; ?>[verify_url]" value="<?php echo esc_attr($o['verify_url']); ?>" placeholder="http://127.0.0.1:8080">
+                        <td><input id="dk-verify" class="regular-text" name="<?php echo esc_attr(self::OPT); ?>[verify_url]" value="<?php echo esc_attr($o['verify_url']); ?>" placeholder="http://127.0.0.1:8080">
                         <p class="description">Where WordPress verifies tokens. Defaults to the browser URL.</p></td></tr>
                     <tr><th scope="row"><label for="dk-key">Site key</label></th>
-                        <td><input id="dk-key" class="regular-text code" name="<?php echo self::OPT; ?>[site_key]" value="<?php echo esc_attr($o['site_key']); ?>"></td></tr>
+                        <td><input id="dk-key" class="regular-text code" name="<?php echo esc_attr(self::OPT); ?>[site_key]" value="<?php echo esc_attr($o['site_key']); ?>"></td></tr>
                     <tr><th scope="row"><label for="dk-secret">Secret</label></th>
-                        <td><input id="dk-secret" type="password" class="regular-text code" name="<?php echo self::OPT; ?>[secret]" value="" placeholder="<?php echo $o['secret'] ? esc_attr__('(saved, leave blank to keep)', 'doorkeep') : ''; ?>" autocomplete="off"></td></tr>
+                        <td><input id="dk-secret" type="password" class="regular-text code" name="<?php echo esc_attr(self::OPT); ?>[secret]" value="" placeholder="<?php echo $o['secret'] ? esc_attr__('(saved, leave blank to keep)', 'doorkeep') : ''; ?>" autocomplete="off"></td></tr>
                     <tr><th scope="row">Protect</th><td><fieldset>
                         <?php foreach ($checks as $k => $label) : ?>
-                            <label><input type="checkbox" name="<?php echo self::OPT; ?>[<?php echo $k; ?>]" value="1" <?php checked($o[$k], 1); ?>> <?php echo esc_html($label); ?></label><br>
+                            <label><input type="checkbox" name="<?php echo esc_attr(self::OPT . '[' . $k . ']'); ?>" value="1" <?php checked($o[$k], 1); ?>> <?php echo esc_html($label); ?></label><br>
                         <?php endforeach; ?>
                     </fieldset></td></tr>
                     <tr><th scope="row">If doorkeep is unreachable</th><td><fieldset>
-                        <label><input type="radio" name="<?php echo self::OPT; ?>[fail_open]" value="0" <?php checked($o['fail_open'], 0); ?>> Refuse the request (safer)</label><br>
-                        <label><input type="radio" name="<?php echo self::OPT; ?>[fail_open]" value="1" <?php checked($o['fail_open'], 1); ?>> Let it through</label>
+                        <label><input type="radio" name="<?php echo esc_attr(self::OPT); ?>[fail_open]" value="0" <?php checked($o['fail_open'], 0); ?>> Refuse the request (safer)</label><br>
+                        <label><input type="radio" name="<?php echo esc_attr(self::OPT); ?>[fail_open]" value="1" <?php checked($o['fail_open'], 1); ?>> Let it through</label>
                     </fieldset></td></tr>
                     <tr><th scope="row"><label for="dk-proxies">Trusted proxies</label></th>
-                        <td><input id="dk-proxies" class="regular-text code" name="<?php echo self::OPT; ?>[trusted_proxies]" value="<?php echo esc_attr($o['trusted_proxies']); ?>" placeholder="127.0.0.1, 10.0.0.0/8">
+                        <td><input id="dk-proxies" class="regular-text code" name="<?php echo esc_attr(self::OPT); ?>[trusted_proxies]" value="<?php echo esc_attr($o['trusted_proxies']); ?>" placeholder="127.0.0.1, 10.0.0.0/8">
                         <p class="description">Addresses or CIDR ranges of reverse proxies or a CDN in front of WordPress. Their <code>X-Forwarded-For</code> is used to find the visitor's address; leave empty if visitors connect directly.</p></td></tr>
                     <tr><th scope="row"><label for="dk-compat">Field-name compatibility</label></th><td>
-                        <select id="dk-compat" name="<?php echo self::OPT; ?>[compat]">
+                        <select id="dk-compat" name="<?php echo esc_attr(self::OPT); ?>[compat]">
                             <option value="" <?php selected($o['compat'], ''); ?>>None</option>
                             <option value="turnstile" <?php selected($o['compat'], 'turnstile'); ?>>Turnstile (cf-turnstile-response)</option>
                             <option value="recaptcha" <?php selected($o['compat'], 'recaptcha'); ?>>reCAPTCHA (g-recaptcha-response)</option>
@@ -184,7 +184,9 @@ final class Doorkeep_Plugin
     {
         $o = self::opts();
         $src = rtrim($o['public_url'], '/') . '/v1/dk.js';
-        wp_enqueue_script('doorkeep', $src, [], null, ['strategy' => 'defer']);
+        // The snippet is versioned and cached by doorkeep itself (it changes
+        // with doorkeep, not with this plugin), so no ?ver= is appended.
+        wp_enqueue_script('doorkeep', $src, [], null, ['strategy' => 'defer']); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.MissingVersion
     }
 
     public static function enqueue_front(): void
@@ -216,7 +218,7 @@ final class Doorkeep_Plugin
     }
     private static function placeholder(string $action): void
     {
-        echo self::placeholder_html($action);
+        echo wp_kses(self::placeholder_html($action), ['div' => ['class' => true, 'data-action' => true]]);
     }
     public static function placeholder_login(): void { self::placeholder('login'); }
     // Front-end forms render after wp_head: a late enqueue prints the
@@ -236,6 +238,7 @@ final class Doorkeep_Plugin
     {
         $o = self::opts();
         if ($token === null) {
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- the doorkeep token is this request's proof; WordPress core forms (login, register) carry no nonce.
             $token = isset($_POST['dk-response']) ? sanitize_text_field(wp_unslash($_POST['dk-response'])) : '';
         }
         if ($token === '') {
@@ -267,12 +270,12 @@ final class Doorkeep_Plugin
      */
     public static function client_ip(): string
     {
-        $addr = isset($_SERVER['REMOTE_ADDR']) ? trim((string)wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        $addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
         $trusted = array_filter(array_map([self::class, 'parse_cidr'], preg_split('/[\s,]+/', self::opts()['trusted_proxies'], -1, PREG_SPLIT_NO_EMPTY)));
         if (!$trusted || !self::in_any($addr, $trusted)) {
             return filter_var($addr, FILTER_VALIDATE_IP) ? $addr : '';
         }
-        $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? (string)wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']) : '';
+        $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])) : '';
         foreach (array_reverse(array_map('trim', explode(',', $xff))) as $hop) {
             if (!filter_var($hop, FILTER_VALIDATE_IP)) {
                 break;
@@ -339,9 +342,11 @@ final class Doorkeep_Plugin
      */
     public static function check_login($user, $username, $password)
     {
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- the doorkeep token is this request's proof; WordPress core forms (login, register) carry no nonce.
         if (empty($_POST) || $username === '' || is_wp_error($user) && $user->get_error_code() === 'empty_username') {
             return $user;
         }
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- the doorkeep token is this request's proof; WordPress core forms (login, register) carry no nonce.
         if (!self::on_wp_login() && !isset($_POST['woocommerce-login-nonce'])) {
             return $user;
         }
@@ -362,6 +367,7 @@ final class Doorkeep_Plugin
     {
         // Administrators sending a reset link from the Users screen, and any
         // other server-side caller, have no browser to check.
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- the doorkeep token is this request's proof; WordPress core forms (login, register) carry no nonce.
         if (is_admin() || (!self::on_wp_login() && !isset($_POST['wc_reset_password']))) {
             return;
         }
@@ -380,7 +386,7 @@ final class Doorkeep_Plugin
         }
         $v = self::verify('comment');
         if (!$v['ok']) {
-            wp_die(self::message(), __('Comment not posted', 'doorkeep'), ['response' => 403, 'back_link' => true]);
+            wp_die(wp_kses_post(self::message()), esc_html__('Comment not posted', 'doorkeep'), ['response' => 403, 'back_link' => true]);
         }
         return $data;
     }
@@ -431,7 +437,7 @@ final class Doorkeep_Plugin
         $token = sanitize_text_field((string)$request->get_header('x-doorkeep-response'));
         $v = self::verify('checkout', $token);
         if (!$v['ok']) {
-            throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException('doorkeep_failed', wp_strip_all_tags(self::message()), 403);
+            throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException('doorkeep_failed', esc_html(wp_strip_all_tags(self::message())), 403);
         }
     }
 

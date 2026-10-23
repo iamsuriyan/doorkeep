@@ -31,6 +31,7 @@ type Redis struct {
 	log     *slog.Logger
 	local   *Tracker
 	lastErr atomic.Int64
+	errs    atomic.Uint64
 }
 
 // NewRedis connects using a redis:// URL.
@@ -60,7 +61,11 @@ func (r *Redis) ctx() (context.Context, context.CancelFunc) {
 }
 
 func (r *Redis) fail(err error) {
-	if err == nil || r.log == nil {
+	if err == nil {
+		return
+	}
+	r.errs.Add(1)
+	if r.log == nil {
 		return
 	}
 	now := time.Now().Unix()
@@ -68,6 +73,9 @@ func (r *Redis) fail(err error) {
 		r.log.Warn("velocity: redis unavailable, using this node's counts only", "err", err)
 	}
 }
+
+// Errors returns how many Redis calls have failed (for metrics).
+func (r *Redis) Errors() uint64 { return r.errs.Load() }
 
 // Local returns the node-local mirror (used for sweeping its memory).
 func (r *Redis) Local() *Tracker { return r.local }

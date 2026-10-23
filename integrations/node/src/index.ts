@@ -110,3 +110,56 @@ export function createVerifier(cfg: VerifierConfig) {
 }
 
 export type Verifier = ReturnType<typeof createVerifier>;
+
+// ---------------- Express / Connect middleware ----------------
+
+interface MiddlewareRequest {
+  body?: Record<string, unknown>;
+  ip?: string;
+  socket?: { remoteAddress?: string };
+  doorkeep?: VerifyResult;
+}
+interface MiddlewareResponse {
+  status(code: number): MiddlewareResponse;
+  json(body: unknown): unknown;
+}
+type Next = (err?: unknown) => void;
+
+export interface MiddlewareOptions {
+  /** Expected action; the token must have been issued for it. */
+  action?: string;
+  /** Form field carrying the token. Default "dk-response". */
+  field?: string;
+  /** Client address for strict IP binding. Default req.ip. */
+  remoteIp?: (req: MiddlewareRequest) => string | undefined;
+  /** Called instead of the default 403 JSON response when the check fails. */
+  onFail?: (req: MiddlewareRequest, res: MiddlewareResponse, result: VerifyResult) => void;
+}
+
+/**
+ * Express (or any Connect-style) middleware that verifies the token in the
+ * request body before the route runs. Needs a body parser
+ * (express.urlencoded / express.json) in front of it. The result is put on
+ * req.doorkeep for the route.
+ *
+ *   app.post("/signup", express.urlencoded({ extended: false }), doorkeep.middleware({ action: "signup" }), handler)
+ */
+export function middleware(v: Verifier, opts: MiddlewareOptions = {}) {
+  const field = opts.field ?? "dk-response";
+  return async (req: MiddlewareRequest, res: MiddlewareResponse, next: Next) => {
+    const token = req.body?.[field];
+    let result: VerifyResult;
+    try {
+      result = await v.verify(typeof token === "string" ? token : "", {
+        action: opts.action,
+        remoteIp: opts.remoteIp ? opts.remoteIp(req) : (req.ip ?? req.socket?.remoteAddress),
+      });
+    } catch (e) {
+      return next(e); // doorkeep unreachable with failMode "closed"
+    }
+    req.doorkeep = result;
+    if (result.success) return next();
+    if (opts.onFail) return opts.onFail(req, res, result);
+    res.status(403).json({ error: "doorkeep-check-failed" });
+  };
+}

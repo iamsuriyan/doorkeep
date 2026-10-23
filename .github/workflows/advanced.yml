@@ -1,0 +1,43 @@
+# Advanced automation tools (patchright, Camoufox, Nodriver) against the
+# detection rules. Weekly and on demand: the patched browsers are large and
+# the results are measurements tracked in testing/e2e/known_misses.yaml.
+# A tool marked "caught" in testing/e2e/advanced.json that gets through fails
+# the run.
+name: advanced
+on:
+  schedule: [{ cron: "17 3 * * 1" }]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+      DK_ADVANCED: "1"
+      DK_CAMOUFOX: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - uses: astral-sh/setup-uv@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @doorkeep/snippet build && pnpm --filter @doorkeep/dashboard build
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: browser system dependencies
+        run: |
+          for i in 1 2 3; do
+            timeout 600 pnpm --filter e2e exec playwright install-deps chromium firefox && break
+            [ "$i" = 3 ] && exit 1
+          done
+      - run: pnpm --filter e2e exec playwright install chromium && pnpm --filter e2e exec patchright install chromium
+      - name: Camoufox browser
+        run: uv run --with 'camoufox[geoip]' python -m camoufox fetch
+      - name: measure
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" pnpm --filter e2e exec playwright test tests/advanced.spec.ts
+        env:
+          HOME: ${{ github.workspace }}/.home

@@ -31,6 +31,8 @@ jobs:
           for i in $(seq 1 30); do docker exec pg pg_isready -U dk && break; sleep 1; done
           DK_TEST_POSTGRES="postgres://dk:dk@127.0.0.1:15432/dk?sslmode=disable" DK_TEST_REDIS=redis://127.0.0.1:16379/0 \
             go test -count=1 ./internal/store/... ./internal/signals/velocity/
+      - name: Prometheus alert rules
+        run: docker run --rm -v "$PWD/deploy/prometheus:/w" -w /w --entrypoint promtool prom/prometheus:latest test rules alerts_test.yml
       - uses: dominikh/staticcheck-action@v1
         with:
           install-go: false
@@ -66,6 +68,18 @@ jobs:
           php-version: ${{ matrix.php }}
           tools: none
       - name: lint
-        run: find integrations/php integrations/wordpress -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find integrations/php integrations/wordpress integrations/laravel -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: php integrations/php/tests/run.php
       - run: php -d error_reporting=E_ALL integrations/wordpress/tests/run.php
+      - run: php integrations/laravel/tests/run.php
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: client and Django helpers
+        working-directory: integrations/python
+        run: uv run --python ${{ matrix.python }} --with 'django>=4.2,<6' --with-editable . python -m unittest discover -s tests -v

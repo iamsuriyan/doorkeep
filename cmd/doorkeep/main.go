@@ -31,6 +31,7 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/iamsuriyan/doorkeep/internal/api"
+	"github.com/iamsuriyan/doorkeep/internal/backup"
 	"github.com/iamsuriyan/doorkeep/internal/config"
 	"github.com/iamsuriyan/doorkeep/internal/nonce"
 	"github.com/iamsuriyan/doorkeep/internal/pseudo"
@@ -63,6 +64,10 @@ func main() {
 		err = admin(os.Args[2:])
 	case "export-datamap":
 		err = exportDataMap(os.Args[2:])
+	case "backup":
+		err = backupCmd(os.Args[2:])
+	case "restore":
+		err = restoreCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("doorkeep", version)
 	case "help", "-h", "--help":
@@ -89,6 +94,8 @@ Usage:
   doorkeep admin token list | revoke ID
   doorkeep ipdata update [--config path]
   doorkeep export-datamap [--format md|json]   (privacy data map for your records)
+  doorkeep backup --out FILE.tar.gz            (database snapshot and secrets; safe while serving)
+  doorkeep restore --in FILE.tar.gz [--force]  (stop doorkeep first)
   doorkeep migrate [--config path]
   doorkeep version
 
@@ -140,6 +147,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	api.Version = version
 	srv := api.New(cfg, db, rs, log)
 	if cfg.RedisURL != "" {
 		rv, err := velocity.NewRedis(cfg.RedisURL, nil, log)
@@ -337,7 +345,7 @@ func randToken(n int) string {
 }
 
 func loadIPData(st *ipintel.Store, cfg *config.Config, log *slog.Logger) {
-	db, err := ipintel.Load(cfg.IPDataDir())
+	db, err := ipintel.Load(cfg.IPDataDir(), cfg.BlocklistNames())
 	if err != nil {
 		// Load still returns the sources that did parse.
 		log.Error("ipdata load incomplete", "err", err)
@@ -360,7 +368,7 @@ func ipdataRefresher(ctx context.Context, st *ipintel.Store, cfg *config.Config,
 	for {
 		if cfg.IPDataAutoUpdate && stale() {
 			uctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-			err := ipintel.Update(uctx, cfg.IPDataDir(), nil)
+			err := ipintel.Update(uctx, cfg.IPDataDir(), nil, cfg.IPDataBlocklists)
 			cancel()
 			if err != nil {
 				log.Warn("ipdata update incomplete", "err", err)
@@ -389,15 +397,15 @@ func ipdata(args []string) error {
 		return err
 	}
 	start := time.Now()
-	err = ipintel.Update(context.Background(), cfg.IPDataDir(), nil)
-	db, lerr := ipintel.Load(cfg.IPDataDir())
+	err = ipintel.Update(context.Background(), cfg.IPDataDir(), nil, cfg.IPDataBlocklists)
+	db, lerr := ipintel.Load(cfg.IPDataDir(), cfg.BlocklistNames())
 	if lerr != nil {
 		fmt.Fprintln(os.Stderr, "doorkeep: some ipdata files could not be read:", lerr)
 	}
 	{
 		c := db.Counts()
-		fmt.Printf("ipdata in %s: %d v4 ranges, %d v6 ranges, %d Tor exits, %d DROP prefixes (%s)\n",
-			cfg.IPDataDir(), c["v4"], c["v6"], c["tor"], c["drop"], time.Since(start).Round(time.Millisecond))
+		fmt.Printf("ipdata in %s: %d v4 ranges, %d v6 ranges, %d Tor exits, %d DROP prefixes, %d blocklist ranges (%s)\n",
+			cfg.IPDataDir(), c["v4"], c["v6"], c["tor"], c["drop"], c["blocklist"], time.Since(start).Round(time.Millisecond))
 		fmt.Println("sources:", strings.Join(db.Sources, "; "))
 	}
 	return err
@@ -618,4 +626,69 @@ func exportDataMap(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("export-datamap: unknown format %q (md or json)", *format)
+}
+
+// backupCmd writes the data directory (SQLite snapshot and secrets) to one
+// archive. It is safe to run while doorkeep is serving.
+func backupCmd(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	out := fs.String("out", "", "archive to write, e.g. doorkeep-2026-10-23.tar.gz")
+	cfg, db, err := load(fs, args)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if *out == "" {
+		return errors.New("backup: --out is required")
+	}
+	if db.IsPostgres() {
+		return errors.New("backup: cluster mode stores data in Postgres; back it up with pg_dump, and keep DOORKEEP_SECRET and DOORKEEP_TOKEN_KEY in your secret store")
+	}
+	if _, err := os.Stat(*out); err == nil {
+		return fmt.Errorf("backup: %s already exists", *out)
+	}
+	if err := backup.Create(context.Background(), db, cfg.DataDir, *out, version); err != nil {
+		return err
+	}
+	fi, _ := os.Stat(*out)
+	fmt.Fprintf(os.Stderr, "Backup written to %s (%d KB). It contains the instance secret: store it like a password.\n", *out, fi.Size()>>10)
+	return nil
+}
+
+// restoreCmd unpacks a backup into the data directory.
+func restoreCmd(args []string) error {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	in := fs.String("in", "", "archive written by doorkeep backup")
+	force := fs.Bool("force", false, "replace an existing database (stop doorkeep first)")
+	cfgPath := fs.String("config", os.Getenv("DOORKEEP_CONFIG"), "path to config YAML")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *in == "" {
+		return errors.New("restore: --in is required")
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if cfg.DatabaseURL != "" {
+		return errors.New("restore: cluster mode uses Postgres; restore it with pg_restore")
+	}
+	m, err := backup.Restore(*in, cfg.DataDir, *force)
+	if err != nil {
+		return err
+	}
+	// Open it to run any newer migrations and prove it is readable.
+	db, err := sqlstore.Open(filepath.Join(cfg.DataDir, backup.FileDB))
+	if err != nil {
+		return fmt.Errorf("restore: restored database does not open: %w", err)
+	}
+	defer db.Close()
+	sites, err := db.ListSites(context.Background())
+	if err != nil {
+		return fmt.Errorf("restore: restored database is not readable: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Restored backup from %s (doorkeep %s) into %s: %d site(s). Run `doorkeep ipdata update` before serving.\n",
+		m.Created.Format(time.RFC3339), m.Version, cfg.DataDir, len(sites))
+	return nil
 }

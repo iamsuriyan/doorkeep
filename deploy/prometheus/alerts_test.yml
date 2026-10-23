@@ -1,0 +1,59 @@
+# promtool test rules alerts_test.yml
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="doorkeep",instance="a"}'
+        values: '1 1 0 0 0 0'
+      - series: 'doorkeep_http_requests_total{job="doorkeep",instance="a",route="POST /v1/submit",code="200"}'
+        values: '0+90x30'
+      - series: 'doorkeep_http_requests_total{job="doorkeep",instance="a",route="POST /v1/submit",code="500"}'
+        values: '0+10x30'
+      - series: 'doorkeep_ipdata_updated_time_seconds{job="doorkeep",instance="a"}'
+        values: '0x120'
+      - series: 'doorkeep_ipdata_updated_time_seconds{job="doorkeep",instance="b"}'
+        values: '-1296000x120'
+      - series: 'doorkeep_redis_errors_total{job="doorkeep",instance="a"}'
+        values: '0+5x20'
+      - series: 'doorkeep_submits_total{job="doorkeep",instance="a",site="s1",outcome="block"}'
+        values: '0+60x40'
+      - series: 'doorkeep_submits_total{job="doorkeep",instance="a",site="s1",outcome="allow"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: DoorkeepDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: doorkeep, instance: a }
+            exp_annotations:
+              summary: "doorkeep a is down"
+              description: "Forms protected by doorkeep fail closed (or open, if configured) while it is unreachable."
+      - eval_time: 20m
+        alertname: DoorkeepServerErrors
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: a }
+            exp_annotations:
+              summary: "doorkeep a: over 2% of requests fail"
+              description: "Check the log for store or internal errors (doorkeep_internal_errors_total)."
+      - eval_time: 15m
+        alertname: DoorkeepRedisFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, job: doorkeep, instance: a }
+            exp_annotations:
+              summary: "doorkeep a: Redis errors, velocity counts are per node"
+      - eval_time: 35m
+        alertname: DoorkeepBlockSurge
+        exp_alerts:
+          - exp_labels: { severity: info, site: s1 }
+            exp_annotations:
+              summary: "doorkeep site s1: more than half of submits blocked"
+      - eval_time: 30m
+        alertname: DoorkeepIPDataStale
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: DoorkeepIPDataStale
+        exp_alerts:
+          - exp_labels: { severity: warning, job: doorkeep, instance: b }
+            exp_annotations:
+              summary: "doorkeep b: IP intelligence not updated for 14 days"
+              description: "Network and blocklist signals go stale. Run `doorkeep ipdata update` and check outbound access."
