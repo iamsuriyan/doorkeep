@@ -8,7 +8,7 @@ permissions:
 jobs:
   browsers:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       # One fixed location for install and test: the test step overrides HOME,
       # which otherwise moves Playwright's default browser cache.
@@ -28,7 +28,16 @@ jobs:
       # The Next.js example depends on the workspace packages' build output.
       - run: pnpm --filter @doorkeep/verify build && pnpm --filter @doorkeep/next build
       - run: sudo apt-get update && sudo apt-get install -y xvfb
-      - run: pnpm --filter e2e exec playwright install --with-deps chromium firefox
+      # System libraries come from the Ubuntu mirror, which is sometimes very
+      # slow; bound each attempt and retry rather than hang the whole job.
+      - name: browser system dependencies
+        run: |
+          for i in 1 2 3; do
+            timeout 600 pnpm --filter e2e exec playwright install-deps chromium firefox && break
+            echo "attempt $i failed or timed out; retrying"
+            [ "$i" = 3 ] && exit 1
+          done
+      - run: pnpm --filter e2e exec playwright install chromium firefox
       - name: detection matrix
         run: xvfb-run -a -s "-screen 0 1920x1080x24" pnpm --filter e2e test
         env:
