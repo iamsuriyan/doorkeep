@@ -1,6 +1,6 @@
 # Build the snippet and dashboard, then a static Go binary, then a
 # distroless image.
-FROM node:22-alpine AS snippet
+FROM node:25-alpine AS snippet
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
