@@ -1,0 +1,11 @@
+{
+  "name": "Person who clicks fast and uses autofill (no key presses)",
+  "source": "Fairness guard for the 20 ms press cut-off: fast physical clicks are still 40+ ms",
+  "action": "login",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 60, "beh.click_count": 2, "beh.click_center_frac": 0, "beh.click_dur_mean": 45,
+            "beh.input_no_key_frac": 1, "beh.key_count": 0, "beh.ptr_samples": 55, "beh.ptr_straightness": 0.6, "beh.ptr_interval_cv": 0.5, "beh.untrusted_frac": 0, "t.elapsed_s": 6},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "windows", "auto.eng": "v8", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "allow", "max_risk": 0, "not_fires": ["ZERO_PRESS_DURATION", "PROGRAMMATIC_FILL_AND_CLICK"]}
+}

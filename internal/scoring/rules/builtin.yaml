@@ -171,15 +171,19 @@
   weight: 20
   description: Every click landed within one pixel of the element's exact centre
 
+# Press duration: a physical mouse button or touch press lasts tens of
+# milliseconds or more. Scripted clicks are near zero, but on a loaded
+# machine the gap between their down and up events stretches to a few
+# milliseconds, so the cut-off is 20 ms rather than "exactly zero".
 - id: PROGRAMMATIC_FILL_AND_CLICK
-  when: "beh.input_no_key_frac >= 0.9 && beh.key_count < 1 && beh.click_count >= 1 && beh.click_dur_mean < 1"
+  when: "beh.input_no_key_frac >= 0.9 && beh.key_count < 1 && beh.click_count >= 1 && beh.click_dur_mean < 20"
   weight: 30
-  description: Fields filled without any key presses and a zero-duration click (scripted form fill)
+  description: Fields filled without any key presses and a near-zero press (scripted form fill)
 
 - id: ZERO_PRESS_DURATION
-  when: "beh.click_count >= 1 && beh.click_dur_mean < 1"
+  when: "beh.click_count >= 1 && beh.click_dur_mean < 20"
   weight: 20
-  description: Clicks with zero press duration
+  description: Clicks with near-zero press duration (under 20 ms, shorter than any physical press)
 
 - id: ROBOTIC_TYPING
   when: "beh.key_count >= 8 && beh.key_hold_mean < 1 && beh.key_interval_cv < 0.02"

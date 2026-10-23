@@ -1,0 +1,12 @@
+{
+  "name": "Headed Chromium over CDP on a loaded machine (scripted click stretched to 4 ms)",
+  "source": "GitHub Actions run 39909452661: detection.spec.ts headed CDP case was allowed when the press measured over 1 ms",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 5, "beh.click_count": 1, "beh.click_center_frac": 1, "beh.click_dur_mean": 4,
+            "beh.input_no_key_frac": 1, "beh.key_count": 0, "beh.ptr_samples": 1, "t.elapsed_s": 1.8},
+    "cat": {"fp.ua_family": "chrome", "fp.os_family": "linux", "auto.eng": "v8", "fp.gpu_class": "software"}
+  },
+  "expect": {"outcome": "block", "min_risk": 75, "fires": ["ZERO_PRESS_DURATION", "PROGRAMMATIC_FILL_AND_CLICK", "CLICK_EXACT_CENTER"],
+             "note": "Press-duration rules must not depend on how fast the machine running the bot is."}
+}

@@ -26,7 +26,7 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `UA_FEATURE_MISMATCH` | +30 |  | Available JavaScript features do not match the claimed browser version | `fp.feat_mismatch >= 2` | `prof.rfp == 1` |
 | `GPU_OS_MISMATCH` | +30 |  | GPU vendor is impossible for the claimed operating system | `fp.gpu_os_mismatch == 1` | `prof.rfp == 1 \|\| prof.brave == 1` |
 | `ROBOTIC_POINTER_PATH` | +30 |  | Pointer moved in a perfectly straight line at perfectly even intervals | `beh.ptr_samples >= 10 && beh.ptr_collinear_frac >= 0.95 && beh.ptr_interval_cv < 0.05` |  |
-| `PROGRAMMATIC_FILL_AND_CLICK` | +30 |  | Fields filled without any key presses and a zero-duration click (scripted form fill) | `beh.input_no_key_frac >= 0.9 && beh.key_count < 1 && beh.click_count >= 1 && beh.click_dur_mean < 1` |  |
+| `PROGRAMMATIC_FILL_AND_CLICK` | +30 |  | Fields filled without any key presses and a near-zero press (scripted form fill) | `beh.input_no_key_frac >= 0.9 && beh.key_count < 1 && beh.click_count >= 1 && beh.click_dur_mean < 20` |  |
 | `ROBOTIC_TYPING` | +30 |  | Typing with zero key hold time and perfectly even rhythm | `beh.key_count >= 8 && beh.key_hold_mean < 1 && beh.key_interval_cv < 0.02` |  |
 | `UA_CH_MISMATCH` | +30 |  | Client hints contradict the user agent | `net.ch_mismatch == 1` |  |
 | `FP_MULTI_NETWORK` | +30 |  | One device fingerprint seen from several networks in ten minutes | `vel.fp_distinct_ip24_10m >= 4` |  |
@@ -46,7 +46,7 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `CHROME_OBJECT_FAKE` | +20 |  | window.chrome missing or faked on a Chrome UA | `auto.chrome_obj == 3 \|\| (auto.chrome_obj == 2 && fp.ua_family == 'chrome')` | `prof.brave == 1` |
 | `TIMEZONE_OFFSET_MISMATCH` | +20 |  | Timezone name and UTC offset disagree (one was spoofed) | `fp.tz_offset_mismatch == 1` | `prof.rfp == 1` |
 | `CLICK_EXACT_CENTER` | +20 |  | Every click landed within one pixel of the element's exact centre | `beh.click_count >= 1 && beh.click_center_frac >= 0.99` |  |
-| `ZERO_PRESS_DURATION` | +20 |  | Clicks with zero press duration | `beh.click_count >= 1 && beh.click_dur_mean < 1` |  |
+| `ZERO_PRESS_DURATION` | +20 |  | Clicks with near-zero press duration (under 20 ms, shorter than any physical press) | `beh.click_count >= 1 && beh.click_dur_mean < 20` |  |
 | `NO_INTERACTION_FAST_SUBMIT` | +20 |  | Interactive form submitted in under 1.5 s with no input events | `beh.total_events == 0 && t.elapsed_s < 1.5 && action in site.interactive_actions` |  |
 | `UA_CH_MISSING` | +20 |  | Chromium browser did not send client hints | `net.ch_missing == 1` | `prof.brave == 1` |
 | `UA_HTTP1_ON_H2` | +20 |  | Modern browser used HTTP/1.1 although HTTP/2 was offered | `net.http1_on_h2 == 1` |  |
