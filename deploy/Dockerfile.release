@@ -1,5 +1,5 @@
 # Image for GoReleaser: wraps the prebuilt static binary.
-FROM busybox:1.36 AS prep
+FROM busybox:1.38 AS prep
 RUN mkdir -p /data && chown 65532:65532 /data && chmod 0700 /data
 
 FROM gcr.io/distroless/static-debian12:nonroot
