@@ -56,6 +56,7 @@ Built-in rules, by weight. Weights add up to a 0 to 100 risk (default: challenge
 | `NON_NATIVE_CORE_APIS` | +15 |  | Several core browser APIs are not native code (interception or jsdom) | `auto.non_native_apis >= 2` |  |
 | `DEVICE_EMULATION` | +15 |  | Desktop Chrome with coarse pointer and zero touch points (device emulation) | `fp.desktop_coarse_pointer == 1` |  |
 | `CLICK_WITHOUT_MOVEMENT` | +15 |  | Mouse click on a fine-pointer device with no prior pointer movement and no keyboard use | `beh.click_no_move == 1 && fp.pointer_class == 1 && beh.key_count < 1` |  |
+| `SCRIPTED_CLICK` | +15 |  | Every click near-zero in duration and exactly at the element's centre | `beh.click_count >= 1 && beh.click_center_frac >= 0.99 && beh.click_dur_mean < 20 && beh.input_no_key_frac < 0.9` |  |
 | `FIELDS_FILLED_WITHOUT_KEYS` | +15 |  | Every field filled programmatically with no input at all, in an automated browser | `beh.input_no_key_frac >= 0.9 && beh.ptr_samples < 1 && beh.key_count < 1 && auto.wd == 1` |  |
 | `NEVER_FOCUSED_HIDDEN_SUBMIT` | +15 |  | Page was never focused and submitted while hidden | `beh.focus_start == 0 && beh.focus_submit == 0 && beh.hidden_at_submit == 1 && beh.visibility_changes == 0` |  |
 | `IP_CHANGED` | +15 |  | Network changed between session and submit | `net.ip24_changed == 1` |  |

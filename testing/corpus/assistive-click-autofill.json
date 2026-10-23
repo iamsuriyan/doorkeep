@@ -1,0 +1,11 @@
+{
+  "name": "Person using voice control (exact-centre instant clicks) and browser autofill",
+  "source": "Fairness guard: behaviour evidence alone must lead to a challenge, never a block",
+  "action": "signup",
+  "features": {
+    "num": {"auto.wd": 0, "beh.total_events": 10, "beh.ptr_samples": 2, "beh.click_count": 2, "beh.click_dur_mean": 0.5, "beh.click_center_frac": 1,
+            "beh.key_count": 0, "beh.input_no_key_frac": 1, "beh.untrusted_frac": 0, "t.elapsed_s": 20},
+    "cat": {"fp.ua_family": "safari", "fp.os_family": "ios", "auto.eng": "jsc", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "challenge", "max_risk": 74, "note": "Gets the visual challenge (with audio), not a block."}
+}

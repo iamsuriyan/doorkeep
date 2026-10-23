@@ -1,0 +1,13 @@
+{
+  "name": "Camoufox with humanized cursor and real key presses, posing as resistFingerprinting Firefox",
+  "source": "GitHub Actions advanced workflow, 2026-10-23: allowed at risk 40 after proof of work",
+  "action": "signup",
+  "features": {
+    "num": {"prof.rfp": 1, "auto.wd": 0, "beh.total_events": 70, "beh.ptr_samples": 50, "beh.ptr_straightness": 0.8, "beh.ptr_interval_cv": 0.4,
+            "beh.untrusted_frac": 0, "beh.click_count": 3, "beh.click_dur_mean": 0.8, "beh.click_center_frac": 1,
+            "beh.key_count": 32, "beh.key_hold_mean": 0.5, "beh.key_hold_cv": 0.2, "beh.key_interval_cv": 0.4, "beh.input_no_key_frac": 0, "t.elapsed_s": 9},
+    "cat": {"fp.ua_family": "firefox", "fp.os_family": "linux", "auto.eng": "spidermonkey", "fp.gpu_class": "hardware"}
+  },
+  "expect": {"outcome": "challenge", "min_risk": 55, "fires": ["SCRIPTED_CLICK", "PROFILE_RFP"], "not_fires": ["HUMAN_POINTER_EVIDENCE"],
+             "note": "55 minus the proof-of-work credit (20) is still in the challenge band, so the visual challenge is required."}
+}

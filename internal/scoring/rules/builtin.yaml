@@ -192,6 +192,16 @@
   weight: 20
   description: Clicks with near-zero press duration (under 20 ms, shorter than any physical press)
 
+# Both together on the same clicks: a person almost never presses for under
+# 20 ms exactly at the centre. Enough to need the visual challenge, never a
+# block: assistive input (voice control, switch access) can click this way,
+# and the challenge has an audio option. Behaviour alone never blocks, so it
+# adds nothing when PROGRAMMATIC_FILL_AND_CLICK already fired.
+- id: SCRIPTED_CLICK
+  when: "beh.click_count >= 1 && beh.click_center_frac >= 0.99 && beh.click_dur_mean < 20 && beh.input_no_key_frac < 0.9"
+  weight: 15
+  description: Every click near-zero in duration and exactly at the element's centre
+
 - id: ROBOTIC_TYPING
   when: "beh.key_count >= 8 && beh.key_hold_mean < 1 && beh.key_interval_cv < 0.02"
   weight: 30
