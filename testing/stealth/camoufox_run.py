@@ -18,7 +18,10 @@ url = sys.argv[1]
 with Camoufox(headless=False, humanize=True, os="linux") as browser:
     page = browser.new_page()
     page.goto(url)
-    page.wait_for_function("window.doorkeep !== undefined", timeout=30000)
+    # Camoufox evaluates scripts in an isolated world, where page globals
+    # such as window.doorkeep are invisible; the DOM is shared, so wait for
+    # the hidden field the snippet inserts (proof that it ran).
+    page.wait_for_selector("input[name=dk-response]", state="attached", timeout=30000)
     time.sleep(1.5)
     for sel, text in (("#name", "Asha Kumar"), ("#email", "asha.kumar@example.com")):
         page.click(sel)
