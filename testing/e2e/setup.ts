@@ -59,7 +59,7 @@ export default async function setup() {
   const nextDir = join(ROOT, "examples/nextjs-signup");
   const nextEnv = { ...env, DOORKEEP_URL: `http://127.0.0.1:${DK_PORT}`, DOORKEEP_SITE_KEY: nextKey, DOORKEEP_SECRET: nextSecret, PORT: "18185" };
   try {
-    if (!existsSync(join(nextDir, ".next/BUILD_ID"))) execFileSync("npx", ["next", "build"], { cwd: nextDir, env: nextEnv, stdio: "ignore" });
+    if (!existsSync(join(nextDir, ".next/BUILD_ID"))) execFileSync("npx", ["next", "build"], { cwd: nextDir, env: nextEnv, stdio: "inherit" });
     // Own process group so teardown also stops the next-server child.
     const nx = spawn("npx", ["next", "start", "-p", "18185", "-H", "127.0.0.1"], { cwd: nextDir, env: nextEnv, stdio: "ignore", detached: true });
     groups.push(nx.pid!);

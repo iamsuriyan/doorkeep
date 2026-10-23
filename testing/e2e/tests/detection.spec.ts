@@ -120,8 +120,12 @@ test("a real Chromium with no automation is allowed", async () => {
     expect(v.doorkeep!.reasons).not.toContain("CDP_RUNTIME_LEAK");
     expect(v.doorkeep!.reasons).not.toContain("AUTOMATION_WEBDRIVER");
   } finally {
+    // Wait for Chromium to exit before deleting its profile; it keeps
+    // writing to it while shutting down.
+    const exited = new Promise((res) => p.once("exit", res));
     try { process.kill(-p.pid!, "SIGTERM"); } catch {}
-    rmSync(profile, { recursive: true, force: true });
+    await Promise.race([exited, new Promise((res) => setTimeout(res, 5000))]);
+    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 });
 
