@@ -66,8 +66,12 @@
     above: only volume and distribution signals can catch it.
 
 - signal: Camoufox, humanized
-  setup: tests/advanced.spec.ts, testing/stealth/camoufox_run.py
-  status: not yet measured
+  setup: tests/advanced.spec.ts, testing/stealth/camoufox_run.py (GitHub Actions, advanced workflow)
+  status: caught (held at the visual challenge, risk 55)
   note: >
-    Its browser is a 1.3 GB download; measured by the scheduled advanced
-    workflow (.github/workflows/advanced.yml) rather than locally.
+    Humanized cursor and real key presses, and it presents as
+    resistFingerprinting Firefox, which relaxes the consistency rules by
+    design. Only its clicks give it away: exact centre with a near-zero
+    press. It was allowed at risk 40 (proof of work only) until
+    SCRIPTED_CLICK (2026-10-23). A driver that clicks off-centre with real
+    press durations would get through, like patchright with human-like input.
