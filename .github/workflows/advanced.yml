@@ -18,13 +18,13 @@ jobs:
       DK_ADVANCED: "1"
       DK_CAMOUFOX: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @doorkeep/snippet build && pnpm --filter @doorkeep/dashboard build
       - run: sudo apt-get update && sudo apt-get install -y xvfb
